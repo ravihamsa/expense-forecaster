@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Pencil,
@@ -47,6 +48,7 @@ export default function MonthPreview({
   const month = months[index]
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     setEditingId(null)
@@ -134,6 +136,37 @@ export default function MonthPreview({
   const moneyOut = month.expenses + month.loanPayments
   const monthlyFree = month.net - month.savingsContributions
 
+  function groupEvents(items: FlowEvent[], kind: 'out' | 'in') {
+    const groups = new Map<string, FlowEvent[]>()
+    for (const event of items) {
+      const label = event.category?.trim() || 'Other'
+      const key = `${kind}:${label.toLowerCase()}`
+      const list = groups.get(key) ?? []
+      list.push(event)
+      groups.set(key, list)
+    }
+    return [...groups.entries()]
+      .map(([key, list]) => ({
+        key,
+        label: list[0]?.category?.trim() || 'Other',
+        total: list.reduce((sum, event) => sum + event.amount, 0),
+        events: list,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }
+
+  function toggleGroup(key: string) {
+    setCollapsedGroups((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const outgoingGroups = groupEvents(outgoing, 'out')
+  const incomingGroups = groupEvents(incoming, 'in')
+
   function renderEvent(event: FlowEvent) {
     const isLoan = event.source === 'loan' || event.source === 'extra_payment'
     const isIncome = event.source === 'profile'
@@ -215,12 +248,39 @@ export default function MonthPreview({
     )
   }
 
+  function renderGroup(group: ReturnType<typeof groupEvents>[number], kind: 'out' | 'in') {
+    const collapsed = collapsedGroups.has(group.key)
+    return (
+      <div className="preview-group" key={group.key}>
+        <button
+          type="button"
+          className="preview-group-head"
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${group.label}`}
+          onClick={() => toggleGroup(group.key)}
+        >
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          <span>{group.label}</span>
+          <small>{group.events.length} {group.events.length === 1 ? 'entry' : 'entries'}</small>
+          <b className={kind === 'in' ? 'positive' : 'negative'}>
+            {kind === 'in' ? '+' : '−'}{formatMoney(group.total, currency)}
+          </b>
+        </button>
+        {!collapsed && (
+          <div className="preview-group-items">
+            {group.events.map(renderEvent)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <section className="card month-preview" id="month-preview">
       <div className="card-head">
         <div>
           <h2>Month preview</h2>
-          <p>Budgeted spends on their dates · recorded amounts replace the plan · income and its monthly amount stay editable</p>
+          <p>Budgeted spends on their dates · recorded amounts replace the plan · grouped by category · monthly income stays editable</p>
         </div>
         <div className="preview-controls">
           <span className={`status-pill ${month.spendableBalance >= 0 ? 'pill-green' : 'pill-red'}`}>
@@ -268,8 +328,8 @@ export default function MonthPreview({
             <span className="mini-subhead">Money out · {outgoing.length}</span>
             <strong className="negative">−{formatMoney(moneyOut, currency)}</strong>
           </div>
-          {outgoing.length
-            ? outgoing.map(renderEvent)
+          {outgoingGroups.length
+            ? outgoingGroups.map((group) => renderGroup(group, 'out'))
             : <p className="preview-empty">No planned spends or recorded spends this month.</p>}
           {month.savingsEvents.length > 0 && (
             <>
@@ -295,7 +355,9 @@ export default function MonthPreview({
             <span className="mini-subhead">Money in · {incoming.length}</span>
             <strong className="positive">+{formatMoney(moneyIn, currency)}</strong>
           </div>
-          {incoming.map(renderEvent)}
+          {incomingGroups.length
+            ? incomingGroups.map((group) => renderGroup(group, 'in'))
+            : <p className="preview-empty">No income this month.</p>}
         </div>
       </div>
 
