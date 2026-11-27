@@ -25,6 +25,11 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', currenc
   const [name, setName] = useState(initial?.name ?? '')
   const [amount, setAmount] = useState(String(initial?.amount ?? ''))
   const [category, setCategory] = useState(initial?.category ?? (defaultKind === 'income' ? 'Salary' : 'Housing'))
+  const [customCategory, setCustomCategory] = useState(() => {
+    const initialCategory = initial?.category ?? ''
+    return initialCategory !== ''
+      && !(initial?.kind === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).includes(initialCategory)
+  })
   const [account, setAccount] = useState<MoneyAccount>(initial?.account ?? 'bank')
   const [recurrence, setRecurrence] = useState<Recurrence>(initial?.recurrence ?? 'monthly')
   const [intervalCount, setIntervalCount] = useState(String(initial?.interval_count ?? 3))
@@ -36,6 +41,7 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', currenc
 
   const categories = kind === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
   const needsInterval = recurrence === 'every_n_months' || recurrence === 'every_n_years'
+  const categoryValue = customCategory ? '__custom__' : category
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -43,6 +49,7 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', currenc
     const numericAmount = Number(amount)
     if (!name.trim()) return setError('Please enter a name.')
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) return setError('Enter an amount greater than zero.')
+    if (!category.trim()) return setError('Please choose or enter a category.')
     if (needsInterval && (!Number(intervalCount) || Number(intervalCount) < 1)) return setError('Enter a valid interval.')
 
     setBusy(true)
@@ -51,7 +58,7 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', currenc
         kind,
         name: name.trim(),
         amount: numericAmount,
-        category,
+        category: category.trim(),
         account,
         recurrence,
         interval_count: needsInterval ? Math.floor(Number(intervalCount)) : 1,
@@ -69,8 +76,8 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', currenc
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       <div className="segmented" role="group" aria-label="Type">
-        <button type="button" className={kind === 'expense' ? 'segment-active' : ''} onClick={() => { setKind('expense'); setCategory('Housing') }}>Expense</button>
-        <button type="button" className={kind === 'income' ? 'segment-active' : ''} onClick={() => { setKind('income'); setCategory('Salary') }}>Income</button>
+        <button type="button" className={kind === 'expense' ? 'segment-active' : ''} onClick={() => { setKind('expense'); setCategory('Housing'); setCustomCategory(false) }}>Expense</button>
+        <button type="button" className={kind === 'income' ? 'segment-active' : ''} onClick={() => { setKind('income'); setCategory('Salary'); setCustomCategory(false) }}>Income</button>
       </div>
 
       <div className="form-grid">
@@ -84,10 +91,28 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', currenc
         </label>
         <label className="field">
           <span>Category</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          <select
+            value={categoryValue}
+            onChange={(e) => {
+              if (e.target.value === '__custom__') {
+                setCustomCategory(true)
+                setCategory(categories.includes(category) ? '' : category)
+              } else {
+                setCustomCategory(false)
+                setCategory(e.target.value)
+              }
+            }}
+          >
             {categories.map((option) => <option key={option} value={option}>{option}</option>)}
+            <option value="__custom__">Custom category…</option>
           </select>
         </label>
+        {customCategory && (
+          <label className="field field-span-2">
+            <span>Custom category name</span>
+            <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Pet care" required />
+          </label>
+        )}
         <label className="field">
           <span>Money account</span>
           <select value={account} onChange={(e) => setAccount(e.target.value as MoneyAccount)}>
