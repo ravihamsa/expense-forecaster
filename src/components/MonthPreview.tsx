@@ -48,7 +48,8 @@ export default function MonthPreview({
   const month = months[index]
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [expandedOutGroups, setExpandedOutGroups] = useState<Set<string>>(new Set())
+  const [collapsedInGroups, setCollapsedInGroups] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     setEditingId(null)
@@ -155,13 +156,15 @@ export default function MonthPreview({
       .sort((a, b) => a.label.localeCompare(b.label))
   }
 
-  function toggleGroup(key: string) {
-    setCollapsedGroups((current) => {
+  function toggleGroup(key: string, kind: 'out' | 'in') {
+    const update = (current: Set<string>): Set<string> => {
       const next = new Set(current)
       if (next.has(key)) next.delete(key)
       else next.add(key)
       return next
-    })
+    }
+    if (kind === 'out') setExpandedOutGroups(update)
+    else setCollapsedInGroups(update)
   }
 
   const outgoingGroups = groupEvents(outgoing, 'out')
@@ -249,7 +252,10 @@ export default function MonthPreview({
   }
 
   function renderGroup(group: ReturnType<typeof groupEvents>[number], kind: 'out' | 'in') {
-    const collapsed = collapsedGroups.has(group.key)
+    // Expense groups start closed; income groups start open.
+    const collapsed = kind === 'out'
+      ? !expandedOutGroups.has(group.key)
+      : collapsedInGroups.has(group.key)
     return (
       <div className="preview-group" key={group.key}>
         <button
@@ -257,7 +263,7 @@ export default function MonthPreview({
           className="preview-group-head"
           aria-expanded={!collapsed}
           aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${group.label}`}
-          onClick={() => toggleGroup(group.key)}
+          onClick={() => toggleGroup(group.key, kind)}
         >
           {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
           <span>{group.label}</span>
@@ -280,7 +286,7 @@ export default function MonthPreview({
       <div className="card-head">
         <div>
           <h2>Month preview</h2>
-          <p>Budgeted spends on their dates · recorded amounts replace the plan · grouped by category · monthly income stays editable</p>
+          <p>Budgeted spends on their dates · grouped by category · click an expense group to expand · monthly income stays editable</p>
         </div>
         <div className="preview-controls">
           <span className={`status-pill ${month.spendableBalance >= 0 ? 'pill-green' : 'pill-red'}`}>
