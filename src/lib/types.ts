@@ -432,6 +432,7 @@ export interface AppActions {
   updateGoal(id: string, patch: Partial<NewGoal>): Promise<void>
   deleteGoal(id: string): Promise<void>
   contributeToGoal(id: string, amount: number, fromAccount?: string): Promise<void>
+  moveGoalToBudget(id: string, input: NewBudget): Promise<void>
   upsertActual(input: NewActual): Promise<void>
   deleteActual(id: string): Promise<void>
   /** Remove all SMS-tagged cash flows, actuals, and their dependent edits. */

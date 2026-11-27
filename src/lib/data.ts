@@ -1123,7 +1123,11 @@ async function findCashFlowForBudget(user: AuthUser, id: string): Promise<CashFl
   return (await loadData(user)).cashFlows.find((flow) => flow.id === id)
 }
 
-export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<Budget> {
+async function writeBudget(
+  user: AuthUser,
+  input: BudgetInput,
+  mode: 'insert' | 'upsert',
+): Promise<Budget> {
   const clean = normalizeBudgetInput(input)
   const flow = await addCashFlow(user, budgetCashFlowInput(clean))
   const row: Budget = {
@@ -1137,11 +1141,10 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
       const { id: _id, created_at: _created, ...insertRow } = row
       void _id
       void _created
-      const { data, error } = await supabase
-        .from('budgets')
-        .upsert(insertRow, { onConflict: 'user_id,category,period,start_date' })
-        .select()
-        .single()
+      const query = supabase.from('budgets')
+      const { data, error } = mode === 'insert'
+        ? await query.insert(insertRow).select().single()
+        : await query.upsert(insertRow, { onConflict: 'user_id,category,period,start_date' }).select().single()
       if (error) throw error
       return ensureNumbers(data as unknown as Record<string, unknown>) as unknown as Budget
     }
@@ -1149,7 +1152,9 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
       ...current,
       budgets: [
         row,
-        ...current.budgets.filter((budget) => budgetKey(budget) !== budgetKey(row)),
+        ...(mode === 'insert'
+          ? current.budgets
+          : current.budgets.filter((budget) => budgetKey(budget) !== budgetKey(row))),
       ].sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
     }))
     return row
@@ -1157,6 +1162,14 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
     await deleteCashFlow(user, flow.id).catch(() => undefined)
     throw caught
   }
+}
+
+export async function addBudget(user: AuthUser, input: BudgetInput): Promise<Budget> {
+  return writeBudget(user, input, 'insert')
+}
+
+export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<Budget> {
+  return writeBudget(user, input, 'upsert')
 }
 
 export async function updateBudget(user: AuthUser, id: string, patch: Partial<BudgetInput>): Promise<void> {
@@ -1329,6 +1342,22 @@ export async function contributeToGoal(
       entry.id === id ? { ...entry, current_amount: updatedAmount } : entry
     )),
   }))
+}
+
+/** Turn a savings fund into a real planned spend with a linked cash flow. */
+export async function moveGoalToBudget(user: AuthUser, id: string, input: BudgetInput): Promise<Budget> {
+  const current = await loadData(user)
+  if (!current.goals.some((goal) => goal.id === id)) {
+    throw new Error('That savings fund no longer exists.')
+  }
+  const budget = await addBudget(user, input)
+  try {
+    await deleteGoal(user, id)
+  } catch (caught) {
+    await deleteBudget(user, budget.id).catch(() => undefined)
+    throw caught
+  }
+  return budget
 }
 
 export async function upsertActual(user: AuthUser, input: ActualInput): Promise<Actual> {
