@@ -10,7 +10,10 @@ import java.util.regex.Pattern;
  */
 final class TransactionParser {
     private static final Pattern CURRENCY_AMOUNT = Pattern.compile(
-            "(?i)(?:₹|\\bINR\\b|\\bRs\\.?)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)");
+            "(?i)(?:₹\\s*|\\b(?:Rs|INR)\\s*\\.?\\s*)"
+                    + "([0-9][0-9,]*(?:\\.[0-9]{1,2})?)");
+    private static final Pattern TRANSACTION_VERB = Pattern.compile(
+            "(?i)\\b(?:debited|credited|spent|paid|sent|withdrawn|received|deposited|charged)\\b");
     private static final Pattern VERB_AMOUNT = Pattern.compile(
             "(?i)\\b(?:debited|credited|spent|paid|sent|withdrawn|received|deposited|charged)\\b"
                     + "[^0-9]{0,24}([0-9][0-9,]*(?:\\.[0-9]{1,2})?)");
@@ -60,12 +63,16 @@ final class TransactionParser {
         return candidate;
     }
 
-    /** ₹ / Rs / INR first, then verbs such as debited/credited, then any number. */
+    /**
+     * Currency-prefixed amounts are authoritative. With several (for example a balance
+     * after the debit), the one closest to a transaction verb wins. Verbs and then any
+     * number are only fallbacks for messages without a currency prefix.
+     */
     static double parseAmount(String body) {
         if (body == null || body.isEmpty()) {
             return 0;
         }
-        double amount = firstAmount(CURRENCY_AMOUNT, body);
+        double amount = currencyAmount(body);
         if (amount <= 0) {
             amount = firstAmount(VERB_AMOUNT, body);
         }
@@ -75,19 +82,54 @@ final class TransactionParser {
         return amount;
     }
 
+    private static double currencyAmount(String body) {
+        Matcher matcher = CURRENCY_AMOUNT.matcher(body);
+        double best = 0;
+        int bestDistance = Integer.MAX_VALUE;
+        while (matcher.find()) {
+            double value = toAmount(matcher.group(1));
+            if (value <= 0) {
+                continue;
+            }
+            int distance = distanceToVerb(body, matcher.start());
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = value;
+            }
+        }
+        return best;
+    }
+
+    private static int distanceToVerb(String body, int position) {
+        Matcher matcher = TRANSACTION_VERB.matcher(body);
+        int best = Integer.MAX_VALUE;
+        while (matcher.find()) {
+            int distance = Math.abs(matcher.start() - position);
+            if (distance < best) {
+                best = distance;
+            }
+        }
+        return best;
+    }
+
     private static double firstAmount(Pattern pattern, String body) {
         Matcher matcher = pattern.matcher(body);
         while (matcher.find()) {
-            try {
-                double value = Double.parseDouble(matcher.group(1).replace(",", ""));
-                if (value > 0 && value < 1_000_000_000d) {
-                    return value;
-                }
-            } catch (NumberFormatException ignored) {
-                // Try the next match.
+            double value = toAmount(matcher.group(1));
+            if (value > 0) {
+                return value;
             }
         }
         return 0;
+    }
+
+    private static double toAmount(String raw) {
+        try {
+            double value = Double.parseDouble(raw.replace(",", ""));
+            return value > 0 && value < 1_000_000_000d ? value : 0;
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     /** Income keywords win only when they appear earlier than expense keywords. */
