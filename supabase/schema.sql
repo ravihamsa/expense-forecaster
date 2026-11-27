@@ -244,6 +244,37 @@ create policy "goals_update_own" on public.goals
 create policy "goals_delete_own" on public.goals
   for delete to authenticated using (auth.uid() = user_id);
 
+-- Vendor rules learned by the SMS companion. One signed-in user owns each rule.
+create table if not exists public.vendor_rules (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  vendor_key text not null,
+  vendor_name text not null default '',
+  kind text not null check (kind in ('income', 'expense')),
+  category text not null default 'Other',
+  account text not null default 'bank' check (account in ('cash', 'bank')),
+  auto_apply boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, vendor_key)
+);
+
+create index if not exists vendor_rules_user_idx on public.vendor_rules(user_id);
+
+alter table public.vendor_rules enable row level security;
+drop policy if exists "vendor_rules_select_own" on public.vendor_rules;
+drop policy if exists "vendor_rules_insert_own" on public.vendor_rules;
+drop policy if exists "vendor_rules_update_own" on public.vendor_rules;
+drop policy if exists "vendor_rules_delete_own" on public.vendor_rules;
+create policy "vendor_rules_select_own" on public.vendor_rules
+  for select to authenticated using (auth.uid() = user_id);
+create policy "vendor_rules_insert_own" on public.vendor_rules
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy "vendor_rules_update_own" on public.vendor_rules
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "vendor_rules_delete_own" on public.vendor_rules
+  for delete to authenticated using (auth.uid() = user_id);
+
 -- Recorded amounts for planned occurrences. event_key is the stable forecast id.
 create table if not exists public.actuals (
   id uuid primary key default gen_random_uuid(),
@@ -424,7 +455,7 @@ create policy "loan_payments_update_own" on public.loan_payments
 create policy "loan_payments_delete_own" on public.loan_payments
   for delete to authenticated using (auth.uid() = user_id);
 
-grant select, insert, update, delete on public.profiles, public.monthly_incomes, public.cash_flows, public.cash_flow_overrides, public.cash_flow_moves, public.cash_flow_skips, public.budgets, public.goals, public.actuals, public.loans, public.loan_payments to authenticated;
+grant select, insert, update, delete on public.profiles, public.monthly_incomes, public.cash_flows, public.cash_flow_overrides, public.cash_flow_moves, public.cash_flow_skips, public.budgets, public.goals, public.vendor_rules, public.actuals, public.loans, public.loan_payments to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Create a profile automatically when a new user signs up
