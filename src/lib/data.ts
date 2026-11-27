@@ -8,6 +8,7 @@ import type {
   CashFlowMove,
   CashFlowOverride,
   CashFlowSkip,
+  DataExport,
   Goal,
   Loan,
   LoanPayment,
@@ -885,6 +886,256 @@ export async function deleteLoanPayment(user: AuthUser, id: string): Promise<voi
         : data.loans,
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// JSON export / import (portable backups and demo -> Supabase migration)
+// ---------------------------------------------------------------------------
+
+export interface LocalDemoAccount {
+  id: string
+  email: string
+  name: string
+  hasData: boolean
+}
+
+/** Demo accounts still stored in this browser, even while Supabase is enabled. */
+export function listLocalDemoAccounts(): LocalDemoAccount[] {
+  return localUsers().map((user) => ({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    hasData: Boolean(readJSON<AppData | null>(KEYS.data(user.id), null)?.profile),
+  }))
+}
+
+export function buildDataExport(user: AuthUser, data: AppData): DataExport {
+  return {
+    app: 'finplannar',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source: { mode: usingSupabase ? 'supabase' : 'local', userId: user.id },
+    account: {
+      display_name: data.profile.display_name || user.name,
+      email: user.email,
+    },
+    data: normalizeData(data),
+  }
+}
+
+/** Export a demo account directly from localStorage (works in Supabase mode too). */
+export function exportLocalDemoData(userId: string): DataExport | null {
+  const localUser = localUsers().find((user) => user.id === userId)
+  if (!localUser) return null
+  const stored = readJSON<AppData | null>(KEYS.data(userId), null)
+  if (!stored?.profile) return null
+  return {
+    app: 'finplannar',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source: { mode: 'local', userId },
+    account: {
+      display_name: stored.profile.display_name || localUser.name,
+      email: localUser.email,
+    },
+    data: normalizeData(stored),
+  }
+}
+
+export function parseDataExport(text: string): DataExport {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    throw new Error('That file is not valid JSON.')
+  }
+  if (!raw || typeof raw !== 'object') throw new Error('That file does not contain a FinPlannar export.')
+  const envelope = raw as Partial<DataExport>
+  if (envelope.app !== 'finplannar') throw new Error('That JSON was not exported from FinPlannar.')
+  if (envelope.version !== 1) throw new Error(`Unsupported export version: ${String(envelope.version)}.`)
+  if (!envelope.data || typeof envelope.data !== 'object' || !(envelope.data as AppData).profile) {
+    throw new Error('That export is missing its planner data.')
+  }
+  const source = envelope.source
+  const account = envelope.account
+  return {
+    app: 'finplannar',
+    version: 1,
+    exportedAt: typeof envelope.exportedAt === 'string' ? envelope.exportedAt : new Date().toISOString(),
+    source: {
+      mode: source?.mode === 'supabase' ? 'supabase' : 'local',
+      userId: typeof source?.userId === 'string' ? source.userId : '',
+    },
+    account: {
+      display_name: typeof account?.display_name === 'string'
+        ? account.display_name
+        : (envelope.data as AppData).profile.display_name || '',
+      email: typeof account?.email === 'string' ? account.email : '',
+    },
+    data: normalizeData(envelope.data as AppData),
+  }
+}
+
+/** New ids everywhere, with every reference and stable actual key updated. */
+function remapData(data: AppData, userId: string): AppData {
+  const idMap = new Map<string, string>()
+  const freshId = (oldId: string | null | undefined): string => {
+    if (!oldId) return makeId()
+    let next = idMap.get(oldId)
+    if (!next) {
+      next = makeId()
+      idMap.set(oldId, next)
+    }
+    return next
+  }
+
+  const monthlyIncomes = data.monthlyIncomes.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId,
+  }))
+  const cashFlows = data.cashFlows.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId,
+  }))
+  const cashFlowOverrides = data.cashFlowOverrides.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId, cash_flow_id: freshId(row.cash_flow_id),
+  }))
+  const cashFlowMoves = data.cashFlowMoves.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId, cash_flow_id: freshId(row.cash_flow_id),
+  }))
+  const cashFlowSkips = data.cashFlowSkips.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId, cash_flow_id: freshId(row.cash_flow_id),
+  }))
+  const budgets = data.budgets.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId,
+  }))
+  const goals = data.goals.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId,
+  }))
+  const loans = data.loans.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId,
+  }))
+  const loanPayments = data.loanPayments.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId, loan_id: freshId(row.loan_id),
+  }))
+
+  // Actual keys are `${cashFlowId}-${timestamp}` (or `income-YYYY-MM`). Swap the
+  // leading id so a recorded amount still attaches to its recreated occurrence.
+  const oldIds = [...idMap.keys()].sort((a, b) => b.length - a.length)
+  const remapEventKey = (key: string): string => {
+    const prefix = oldIds.find((oldId) => key.startsWith(`${oldId}-`))
+    return prefix ? `${String(idMap.get(prefix))}-${key.slice(prefix.length + 1)}` : key
+  }
+  const actuals = data.actuals.map((row) => ({
+    ...row,
+    id: freshId(row.id),
+    user_id: userId,
+    cash_flow_id: row.cash_flow_id ? freshId(row.cash_flow_id) : null,
+    event_key: remapEventKey(row.event_key),
+  }))
+
+  return normalizeData({
+    profile: { ...data.profile, user_id: userId },
+    monthlyIncomes,
+    cashFlows,
+    cashFlowOverrides,
+    cashFlowMoves,
+    cashFlowSkips,
+    budgets,
+    goals,
+    actuals,
+    loans,
+    loanPayments,
+  })
+}
+
+/** Local merge mirrors Supabase upserts: imported rows win on the same key. */
+function mergeData(current: AppData, incoming: AppData): AppData {
+  const by = <T>(rows: T[], key: (row: T) => string): T[] => {
+    const map = new Map<string, T>()
+    rows.forEach((row) => map.set(key(row), row))
+    return [...map.values()]
+  }
+  return normalizeData({
+    profile: incoming.profile,
+    monthlyIncomes: by([...current.monthlyIncomes, ...incoming.monthlyIncomes], (row) => row.month),
+    cashFlows: by([...current.cashFlows, ...incoming.cashFlows], (row) => row.id),
+    cashFlowOverrides: by(
+      [...current.cashFlowOverrides, ...incoming.cashFlowOverrides],
+      (row) => `${row.cash_flow_id}|${row.month}`,
+    ),
+    cashFlowMoves: by(
+      [...current.cashFlowMoves, ...incoming.cashFlowMoves],
+      (row) => `${row.cash_flow_id}|${row.from_date}`,
+    ),
+    cashFlowSkips: by(
+      [...current.cashFlowSkips, ...incoming.cashFlowSkips],
+      (row) => `${row.cash_flow_id}|${row.date}`,
+    ),
+    budgets: by([...current.budgets, ...incoming.budgets], (row) => row.category),
+    goals: by([...current.goals, ...incoming.goals], (row) => row.id),
+    actuals: by([...current.actuals, ...incoming.actuals], (row) => row.event_key),
+    loans: by([...current.loans, ...incoming.loans], (row) => row.id),
+    loanPayments: by([...current.loanPayments, ...incoming.loanPayments], (row) => row.id),
+  })
+}
+
+export async function importDataExport(
+  user: AuthUser,
+  payload: DataExport,
+  replace: boolean,
+): Promise<void> {
+  const imported = remapData(payload.data, user.id)
+
+  if (!usingSupabase || !supabase) {
+    const current = replace ? defaultData(user.id, user.name) : await loadData(user)
+    writeJSON(KEYS.data(user.id), replace ? imported : mergeData(current, imported))
+    return
+  }
+
+  const client = supabase
+  if (replace) {
+    // Children first: no row may point at a parent that is about to disappear.
+    const children = [
+      'actuals',
+      'cash_flow_overrides',
+      'cash_flow_moves',
+      'cash_flow_skips',
+      'loan_payments',
+      'loans',
+      'cash_flows',
+      'budgets',
+      'goals',
+      'monthly_incomes',
+    ]
+    for (const table of children) {
+      const { error } = await client.from(table).delete().eq('user_id', user.id)
+      if (error) throw error
+    }
+  }
+
+  const writeRows = async (table: string, rows: unknown[], onConflict?: string): Promise<void> => {
+    if (!rows.length) return
+    const cleaned = rows.map((row) => {
+      const { created_at: _created, ...rest } = row as Record<string, unknown>
+      void _created
+      return rest
+    })
+    const result = onConflict
+      ? await client.from(table).upsert(cleaned, { onConflict: onConflict })
+      : await client.from(table).insert(cleaned)
+    if (result.error) throw result.error
+  }
+
+  await writeRows('profiles', [{ ...imported.profile, updated_at: new Date().toISOString() }], 'user_id')
+  await writeRows('cash_flows', imported.cashFlows)
+  await writeRows('monthly_incomes', imported.monthlyIncomes, 'user_id,month')
+  await writeRows('cash_flow_overrides', imported.cashFlowOverrides, 'user_id,cash_flow_id,month')
+  await writeRows('cash_flow_moves', imported.cashFlowMoves, 'user_id,cash_flow_id,from_date')
+  await writeRows('cash_flow_skips', imported.cashFlowSkips, 'user_id,cash_flow_id,date')
+  await writeRows('budgets', imported.budgets, 'user_id,category')
+  await writeRows('goals', imported.goals)
+  await writeRows('loans', imported.loans)
+  await writeRows('loan_payments', imported.loanPayments)
+  await writeRows('actuals', imported.actuals, 'user_id,event_key')
 }
 
 export { defaultProfile }

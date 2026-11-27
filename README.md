@@ -43,6 +43,7 @@ you can try everything immediately — data is stored in that browser only.
   - add an extra monthly loan prepayment, targeting a specific loan or the highest-interest loan
   - before/after chart, deficit reduction, interest saved, balance improvement, loans cleared sooner
   - contextual suggestions based on your actual plan
+- JSON export/import in Settings: download a portable backup or move local demo data into a Supabase account. Ids, owner and references are remapped on import, with merge or replace choice and a preview before committing.
 - INR formatting by default (₹ with Indian digit grouping); USD, EUR and GBP can be selected in Settings.
 
 ## Run locally
@@ -79,6 +80,25 @@ Open http://localhost:5173. Without a `.env.local` file you will be in local dem
 > Enable email confirmation under **Authentication → Providers → Email** if you want verified
 > sign-ups. The app handles both flows (immediate session and "check your email" confirmation).
 
+## Move demo data into Supabase (JSON export/import)
+
+Local demo accounts live in your browser's `localStorage`, so enabling Supabase keys starts with an
+empty cloud account. To bring your demo plan across:
+
+1. In demo mode, open **Settings → Move your data → Download JSON**. (If you already enabled
+   Supabase, the older demo accounts are listed under **Demo data still in this browser** — download
+   one there instead.)
+2. Create/sign in to your Supabase account, then open **Settings → Move your data → Import JSON**.
+3. Pick the downloaded file. The app validates it and shows a preview with entry counts.
+4. Choose **Merge with existing** (keep what is in the account and add the imported entries) or
+   **Replace everything** (delete existing entries first — cannot be undone), then confirm.
+
+On import, every row gets a fresh id, `user_id` becomes the signed-in user, references such as
+`cash_flow_id` / `loan_id` are rewritten, and recorded actual keys are updated so they still attach
+to the right occurrence. Profile settings are always taken from the file. The file is a plain JSON
+object with `app`, `version`, `exportedAt`, `source`, `account` and the full planner data under `data`,
+so it also works as a backup you can move between browsers.
+
 ## Production build
 
 ```bash
@@ -102,7 +122,7 @@ src/
     actuals.ts            actual creation and CSV import helpers
     budgets.ts            per-category budget and rollover calculations
     categories.ts         shared income/expense category lists
-    data.ts               Supabase/local demo persistence and auth
+    data.ts               Supabase/local demo persistence, auth and JSON export/import
     format.ts             currency and date formatting
     goals.ts              goal funding and progress calculations
     ledger.ts             strict paired-account money trail derived from recorded data

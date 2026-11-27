@@ -127,6 +127,10 @@ export default function App() {
       deleteLoan: (id) => run(() => api.deleteLoan(user!, id), 'Loan removed.'),
       addLoanPayment: (input) => run(() => api.addLoanPayment(user!, input).then(() => undefined), 'Payment recorded.'),
       deleteLoanPayment: (id) => run(() => api.deleteLoanPayment(user!, id), 'Payment removed.'),
+      importData: (payload, replace) => run(
+        () => api.importDataExport(user!, payload, replace).then(() => undefined),
+        'Data imported.',
+      ),
     }
   }, [user, refresh, notify])
 
@@ -212,7 +216,7 @@ export default function App() {
           />
         )}
         {tab === 'ledger' && <Ledger data={data} />}
-        {tab === 'settings' && <Settings data={data} actions={actions} onNotify={notify} />}
+        {tab === 'settings' && <Settings data={data} actions={actions} user={user} onNotify={notify} />}
       </Layout>
 
       {quickAdd && (

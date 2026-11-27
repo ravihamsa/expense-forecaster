@@ -205,6 +205,22 @@ export interface AppData {
   loanPayments: LoanPayment[]
 }
 
+/** Portable JSON envelope used to move data between browsers and accounts. */
+export interface DataExport {
+  app: 'finplannar'
+  version: 1
+  exportedAt: string
+  source: {
+    mode: 'local' | 'supabase'
+    userId: string
+  }
+  account: {
+    display_name: string
+    email: string
+  }
+  data: AppData
+}
+
 export interface FlowEvent {
   id: string
   name: string
@@ -316,6 +332,8 @@ export interface AppActions {
   deleteLoan(id: string): Promise<void>
   addLoanPayment(input: NewLoanPayment): Promise<void>
   deleteLoanPayment(id: string): Promise<void>
+  /** Import a JSON export, remapping ids and user_id to the signed-in account. */
+  importData(payload: DataExport, replace: boolean): Promise<void>
 }
 
 export interface Advice {
