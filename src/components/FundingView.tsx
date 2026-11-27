@@ -24,7 +24,8 @@ interface FundingRow {
   moneyIn: number
   planned: number
   recorded: number
-  gap: number
+  opening: number
+  closing: number
   buckets: Bucket[]
 }
 
@@ -79,7 +80,8 @@ export default function FundingView({ data, simulation, currency }: Props) {
         moneyIn,
         planned,
         recorded,
-        gap: moneyIn - planned,
+        opening: month.openingBalance,
+        closing: month.closingBalance,
         buckets: BUCKET_ORDER.map((key) => buckets.get(key)!).filter((bucket) => bucket.planned > 0),
       }
     }),
@@ -87,18 +89,18 @@ export default function FundingView({ data, simulation, currency }: Props) {
   )
 
   const current = rows[0]
-  const shortfall = rows.reduce((sum, row) => sum + Math.max(0, -row.gap), 0)
-  const surplus = rows.reduce((sum, row) => sum + Math.max(0, row.gap), 0)
-  const shortMonths = rows.filter((row) => row.gap < 0)
+  const extraNeeded = Math.max(0, -simulation.lowestBalance)
+  const available = Math.max(0, simulation.endingBalance)
+  const shortMonths = rows.filter((row) => row.closing < 0)
   const visibleRows = showAll ? rows : rows.slice(0, 6)
-  const isShort = Boolean(current && current.gap < 0)
+  const isShort = Boolean(current && current.closing < 0)
 
   return (
     <section className="card funding-card">
       <div className="card-head">
         <div>
           <h2>Funding view</h2>
-          <p>Planned income minus planned spends. The rest is extra money you need, or free money for unplanned things.</p>
+          <p>Opening balance + planned income − planned spends. What carries forward is extra money you need, or free money for unplanned things.</p>
         </div>
         <span className={`status-pill ${isShort ? 'pill-red' : 'pill-teal'}`}>
           {isShort ? 'Needs extra funds' : 'Surplus available'}
@@ -113,18 +115,21 @@ export default function FundingView({ data, simulation, currency }: Props) {
               <span>{current.month.label}</span>
               <strong>
                 {isShort
-                  ? `${formatMoney(Math.abs(current.gap), currency)} extra needed`
-                  : `${formatMoney(current.gap, currency)} free for unplanned spends`}
+                  ? `${formatMoney(Math.abs(current.closing), currency)} extra needed`
+                  : `${formatMoney(current.closing, currency)} carried forward`}
               </strong>
               <p>
-                {formatMoney(current.moneyIn, currency)} planned in − {formatMoney(current.planned, currency)} planned out
+                {formatMoney(current.opening, currency)} carried in + {formatMoney(current.moneyIn, currency)} in
+                − {formatMoney(current.planned, currency)} out = {formatMoney(current.closing, currency)}
               </p>
             </div>
           </div>
           <div className="funding-hero-stats">
-            <div><span>Planned income</span><b>{formatMoney(current.moneyIn, currency)}</b></div>
-            <div><span>Planned spends</span><b>{formatMoney(current.planned, currency)}</b></div>
+            <div><span>Carried in</span><b>{formatMoney(current.opening, currency)}</b></div>
+            <div><span>Planned in</span><b>{formatMoney(current.moneyIn, currency)}</b></div>
+            <div><span>Planned out</span><b>{formatMoney(current.planned, currency)}</b></div>
             <div><span>Recorded so far</span><b>{formatMoney(current.recorded, currency)}</b></div>
+            <div><span>Carried forward</span><b>{formatMoney(current.closing, currency)}</b></div>
           </div>
         </div>
       )}
@@ -147,16 +152,18 @@ export default function FundingView({ data, simulation, currency }: Props) {
       <div className="funding-table">
         <div className="funding-table-head">
           <span>Month</span>
+          <span>Carried in</span>
           <span>Planned in</span>
           <span>Planned out</span>
-          <span>Needed / free</span>
+          <span>Carried forward</span>
         </div>
         {visibleRows.map((row) => (
           <div className="funding-table-row" key={row.month.key}>
             <span className="funding-month">{row.month.monthLabel}</span>
+            <span>{formatMoney(row.opening, currency)}</span>
             <span>{formatMoney(row.moneyIn, currency)}</span>
             <span>{formatMoney(row.planned, currency)}</span>
-            <strong className={row.gap < 0 ? 'negative' : 'positive'}>{formatSigned(row.gap, currency)}</strong>
+            <strong className={row.closing < 0 ? 'negative' : 'positive'}>{formatSigned(row.closing, currency)}</strong>
           </div>
         ))}
       </div>
@@ -164,14 +171,14 @@ export default function FundingView({ data, simulation, currency }: Props) {
       <div className="funding-footer">
         <div>
           <Wallet size={16} />
-          <span>Extra funding needed ahead</span>
-          <strong className="negative">{formatMoney(shortfall, currency)}</strong>
-          <small>across {shortMonths.length} {shortMonths.length === 1 ? 'month' : 'months'}</small>
+          <span>Extra funding needed at worst point</span>
+          <strong className="negative">{formatMoney(extraNeeded, currency)}</strong>
+          <small>{shortMonths.length} {shortMonths.length === 1 ? 'month' : 'months'} below zero</small>
         </div>
         <div>
-          <span>Free money available ahead</span>
-          <strong className="positive">{formatMoney(surplus, currency)}</strong>
-          <small>can be used for unplanned spends</small>
+          <span>Money carried to the end</span>
+          <strong className="positive">{formatMoney(available, currency)}</strong>
+          <small>available after the full forecast</small>
         </div>
         {rows.length > 6 && (
           <button className="link-button" onClick={() => setShowAll(!showAll)}>

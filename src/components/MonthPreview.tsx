@@ -130,7 +130,7 @@ export default function MonthPreview({
   const incoming = events.filter((event) => event.kind === 'income')
   const outgoing = events.filter((event) => event.kind === 'expense')
   const moneyIn = month.income + month.loanInflows
-  const moneyOut = month.expenses + month.loanPayments + month.extraPayment
+  const moneyOut = month.expenses + month.loanPayments
 
   function renderEvent(event: FlowEvent) {
     const isLoan = event.source === 'loan' || event.source === 'extra_payment'
@@ -230,12 +230,17 @@ export default function MonthPreview({
       </div>
 
       <div className="preview-stats">
+        <div><span>Opening balance</span><strong>{formatMoney(month.openingBalance, currency)}</strong></div>
         <div><span>Money in</span><strong className="positive">{formatMoney(moneyIn, currency)}</strong></div>
         <div><span>Planned spends</span><strong>{formatMoney(month.expenses, currency)}</strong></div>
-        <div><span>Loan payments</span><strong>{formatMoney(month.loanPayments + month.extraPayment, currency)}</strong></div>
+        <div><span>Loan payments</span><strong>{formatMoney(month.loanPayments, currency)}</strong></div>
         <div><span>Needed / free</span><strong className={month.net >= 0 ? 'positive' : 'negative'}>{formatSigned(month.net, currency)}</strong></div>
-        <div><span>Closing balance</span><strong>{formatMoney(month.closingBalance, currency)}</strong></div>
+        <div><span>Carried forward</span><strong className={month.closingBalance >= 0 ? 'positive' : 'negative'}>{formatMoney(month.closingBalance, currency)}</strong></div>
       </div>
+      <p className="preview-balance-note">
+        Carried forward {formatMoney(month.openingBalance, currency)} + money in {formatMoney(moneyIn, currency)}
+        − money out {formatMoney(moneyOut, currency)} = {formatMoney(month.closingBalance, currency)} into next month.
+      </p>
 
       <div className="preview-columns">
         <div className="preview-column">
