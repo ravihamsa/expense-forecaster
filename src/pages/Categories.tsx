@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Tag, Trash2 } from 'lucide-react'
 import Modal from '../components/Modal'
 import { categoriesOfKind } from '../lib/categories'
 import type { AppActions, AppCategory, AppData, FlowKind, NewCategory } from '../lib/types'
@@ -19,8 +19,14 @@ export default function Categories({ data, actions, onNotify }: Props) {
   const [busy, setBusy] = useState(false)
 
   const categories = useMemo(
-    () => data.categories.filter((category) => category.kind === kind)
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    () => data.categories
+      .filter((category) => category.kind === kind)
+      .sort((a, b) => {
+        const aOther = a.name.toLowerCase() === 'other'
+        const bOther = b.name.toLowerCase() === 'other'
+        if (aOther !== bOther) return aOther ? 1 : -1
+        return a.name.localeCompare(b.name)
+      }),
     [data.categories, kind],
   )
 
@@ -92,32 +98,36 @@ export default function Categories({ data, actions, onNotify }: Props) {
       </header>
 
       <section className="card">
-        <div className="card-head">
+        <div className="card-head category-card-head">
           <div>
             <h2>Your categories</h2>
             <p>Rename or remove anything except Other, which is the fallback for removed categories.</p>
           </div>
-        </div>
-
-        <div className="segmented" role="group" aria-label="Category type">
-          <button type="button" className={kind === 'expense' ? 'segment-active' : ''} onClick={() => setKind('expense')}>
-            Expense ({categoriesOfKind(data.categories, 'expense').length})
-          </button>
-          <button type="button" className={kind === 'income' ? 'segment-active' : ''} onClick={() => setKind('income')}>
-            Income ({categoriesOfKind(data.categories, 'income').length})
-          </button>
+          <div className="segmented" role="group" aria-label="Category type">
+            <button type="button" className={kind === 'expense' ? 'segment-active' : ''} onClick={() => setKind('expense')}>
+              Expense ({categoriesOfKind(data.categories, 'expense').length})
+            </button>
+            <button type="button" className={kind === 'income' ? 'segment-active' : ''} onClick={() => setKind('income')}>
+              Income ({categoriesOfKind(data.categories, 'income').length})
+            </button>
+          </div>
         </div>
 
         {categories.length ? (
-          <div className="ledger-list">
+          <div className="category-list">
             {categories.map((category) => {
               const used = usageCount(category)
               const isOther = category.name.toLowerCase() === 'other'
               return (
-                <div className="ledger-row" key={category.id}>
-                  <div className="ledger-main">
+                <div className="category-row" key={category.id}>
+                  <div className="category-main">
                     <strong>{category.name}</strong>
-                    <span>{used ? `Used by ${used} item${used === 1 ? '' : 's'}` : 'Unused'}{isOther ? ' · fallback' : ''}</span>
+                    <div className="category-meta">
+                      <span className="category-usage">
+                        {used ? `Used by ${used} item${used === 1 ? '' : 's'}` : 'Unused'}
+                      </span>
+                      {isOther && <span className="mini-tag">fallback</span>}
+                    </div>
                   </div>
                   <div className="row-actions">
                     {!isOther && (
@@ -132,7 +142,12 @@ export default function Categories({ data, actions, onNotify }: Props) {
             })}
           </div>
         ) : (
-          <p className="preview-empty">No {kind} categories yet. Add one to reuse it across your plan.</p>
+          <div className="category-empty">
+            <Tag size={26} />
+            <strong>No {kind} categories yet</strong>
+            <span>Add one to reuse it across your plan.</span>
+            <button className="btn btn-primary btn-small" onClick={openAdd}><Plus size={14} /> Add category</button>
+          </div>
         )}
       </section>
 
