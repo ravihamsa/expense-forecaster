@@ -50,6 +50,20 @@ in the Supabase SQL editor before first use. If `vendor_rules` is missing, cash 
 actuals still save; only the vendor-rule upsert fails. Retrying that row reuses the
 stored flow id, so it will not create a duplicate cash flow.
 
+## Reviewing parser output
+
+Tap **Export CSV** to write every received message from the current month to
+`Android/data/com.finplannar.companion/files/finplannar-sms-review.csv` in app storage.
+The file contains the message date, sender, body, parsed amount, kind, merchant, category,
+account and whether the value came from a learned vendor rule. It stays on the device;
+nothing is uploaded.
+
+Pull it to your computer with:
+
+```sh
+adb pull /sdcard/Android/data/com.finplannar.companion/files/finplannar-sms-review.csv
+```
+
 ## Build
 
 Requires JDK 17 and Android SDK Platform 35 installed (AGP 8.7.3, Gradle 8.11.1 wrapper

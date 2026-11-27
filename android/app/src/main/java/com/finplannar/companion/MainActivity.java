@@ -22,6 +22,13 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -34,7 +41,9 @@ import java.util.concurrent.Executors;
 /** Single-screen companion UI. Everything is built in code; there is no XML layout. */
 public final class MainActivity extends Activity {
     private static final int REQUEST_READ_SMS = 42;
+    private static final int REQUEST_READ_SMS_CSV = 43;
     private static final int SCAN_BATCH_LIMIT = 50;
+    private static final int CSV_BATCH_LIMIT = 100;
     private static final int VISIBLE_CANDIDATE_LIMIT = 20;
     private static final String[] ACCOUNTS = {"cash", "bank"};
 
@@ -164,6 +173,12 @@ public final class MainActivity extends Activity {
             @Override
             public void onClick(View view) {
                 showVendorRules();
+            }
+        }));
+        content.addView(button("Export CSV", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                onExportCsvClicked();
             }
         }));
         content.addView(button("Sign out", new View.OnClickListener() {
@@ -314,17 +329,117 @@ public final class MainActivity extends Activity {
         runScan();
     }
 
+    private void onExportCsvClicked() {
+        if (checkSelfPermission(Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.READ_SMS}, REQUEST_READ_SMS_CSV);
+            return;
+        }
+        runCsvExport();
+    }
+
+    private void runCsvExport() {
+        final long monthStart = startOfCurrentMonthMillis();
+        setStatus("Exporting current-month SMS to CSV…");
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                File folder = getExternalFilesDir(null);
+                if (folder == null) {
+                    showCsvError("App storage is unavailable");
+                    return;
+                }
+                File file = new File(folder, "finplannar-sms-review.csv");
+                try {
+                    SmsScanner scanner = new SmsScanner(getContentResolver());
+                    TransactionParser parser = new TransactionParser(db);
+                    long afterId = 0;
+                    int rows = 0;
+                    Writer output = new OutputStreamWriter(
+                            new FileOutputStream(file), StandardCharsets.UTF_8);
+                    try (BufferedWriter writer = new BufferedWriter(output)) {
+                        writeCsvRow(writer, "date", "sender", "body", "amount", "kind",
+                                "merchant", "category", "account", "source");
+                        while (true) {
+                            List<SmsItem> batch = scanner.scanSince(
+                                    monthStart, afterId, CSV_BATCH_LIMIT);
+                            for (SmsItem item : batch) {
+                                Candidate candidate = parser.parse(item);
+                                writeCsvRow(writer,
+                                        dateTimeOf(item.smsDate),
+                                        item.sender,
+                                        item.body.replaceAll("\\s+", " ").trim(),
+                                        String.valueOf(candidate.amount),
+                                        candidate.kind,
+                                        candidate.merchant,
+                                        candidate.category,
+                                        candidate.account,
+                                        candidate.source);
+                                afterId = Math.max(afterId, item.id);
+                                rows++;
+                            }
+                            if (batch.size() < CSV_BATCH_LIMIT) {
+                                break;
+                            }
+                        }
+                    }
+                    final String path = file.getAbsolutePath();
+                    final int count = rows;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            setStatus("CSV exported: " + count + " messages\n" + path);
+                            toast("CSV exported (" + count + " messages)");
+                        }
+                    });
+                } catch (final Exception error) {
+                    showCsvError(message(error));
+                }
+            }
+        });
+    }
+
+    private void showCsvError(final String error) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                setStatus("CSV export failed: " + error);
+                toast("CSV export failed: " + error);
+            }
+        });
+    }
+
+    private static void writeCsvRow(BufferedWriter writer, String... values) throws IOException {
+        for (int index = 0; index < values.length; index++) {
+            if (index > 0) {
+                writer.write(',');
+            }
+            String value = values[index] == null ? "" : values[index];
+            writer.write('"');
+            writer.write(value.replace("\"", "\"\""));
+            writer.write('"');
+        }
+        writer.newLine();
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode != REQUEST_READ_SMS) {
-            return;
-        }
-        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            runScan();
-        } else {
-            setStatus("READ_SMS permission is required to scan messages.");
-            toast("READ_SMS permission is required to scan messages.");
+        boolean granted = grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (requestCode == REQUEST_READ_SMS) {
+            if (granted) {
+                runScan();
+            } else {
+                setStatus("READ_SMS permission is required to scan messages.");
+                toast("READ_SMS permission is required to scan messages.");
+            }
+        } else if (requestCode == REQUEST_READ_SMS_CSV) {
+            if (granted) {
+                runCsvExport();
+            } else {
+                setStatus("READ_SMS permission is required to export SMS data.");
+                toast("READ_SMS permission is required to export SMS data.");
+            }
         }
     }
 
@@ -641,6 +756,11 @@ public final class MainActivity extends Activity {
     private static String dateOf(long timestampMillis) {
         long safeTimestamp = timestampMillis > 0 ? timestampMillis : System.currentTimeMillis();
         return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(safeTimestamp));
+    }
+
+    private static String dateTimeOf(long timestampMillis) {
+        long safeTimestamp = timestampMillis > 0 ? timestampMillis : System.currentTimeMillis();
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date(safeTimestamp));
     }
 
     private void toast(String text) {

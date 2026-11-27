@@ -9,23 +9,31 @@ import java.util.regex.Pattern;
  * network calls are the explicit inserts performed by {@link SupabaseApi} on save.
  */
 final class TransactionParser {
+    private static final String AMOUNT_VALUE = "([0-9][0-9,]*(?:\\.[0-9]{1,2})?)";
+    private static final String AMOUNT_SUFFIX = "\\s*(?:/-)?";
     private static final Pattern CURRENCY_AMOUNT = Pattern.compile(
             "(?i)(?:₹\\s*|\\b(?:Rs|INR)\\s*\\.?\\s*)"
-                    + "([0-9][0-9,]*(?:\\.[0-9]{1,2})?)");
+                    + AMOUNT_VALUE + AMOUNT_SUFFIX);
     private static final Pattern TRANSACTION_VERB = Pattern.compile(
             "(?i)\\b(?:debited|credited|spent|paid|sent|withdrawn|received|deposited|charged)\\b");
     private static final Pattern VERB_AMOUNT = Pattern.compile(
             "(?i)\\b(?:debited|credited|spent|paid|sent|withdrawn|received|deposited|charged)\\b"
-                    + "[^0-9]{0,24}([0-9][0-9,]*(?:\\.[0-9]{1,2})?)");
+                    + "[^0-9]{0,24}" + AMOUNT_VALUE + AMOUNT_SUFFIX);
     private static final Pattern ANY_AMOUNT = Pattern.compile(
-            "\\b([0-9]{1,3}(?:,[0-9]{2,3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)\\b");
+            "\\b([0-9]{1,3}(?:,[0-9]{2,3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)"
+                    + AMOUNT_SUFFIX);
 
     private static final Pattern EXPENSE_WORDS = Pattern.compile(
             "(?i)\\b(?:debited|spent|paid|sent|withdrawn|withdrawal|charged|purchase)\\b");
     private static final Pattern INCOME_WORDS = Pattern.compile(
             "(?i)\\b(?:credited|received|refund|cashback|salary|deposited)\\b");
     private static final Pattern MERCHANT = Pattern.compile(
-            "(?i)\\b(?:at|from)\\s+([A-Za-z0-9][A-Za-z0-9 .&'\\-]{1,60})");
+            "(?i)\\b(?:at|to|from|for)\\s+([A-Za-z0-9][A-Za-z0-9 .&'\\-]{1,60})");
+    private static final Pattern MERCHANT_STOP = Pattern.compile(
+            "(?i)\\s+(?:on|via|using|with|by|dated|ref(?:erence)?|txn|transaction|"
+                    + "balance|available|avl|bal|for|a/c|acct|account)\\b.*$");
+    private static final Pattern ACCOUNTISH = Pattern.compile(
+            "(?i)^(?:a/c|acct|account|vpa|upi|card|xx[0-9]*|x{2,}[0-9]*)(?:\\s|$)");
     private static final Pattern CASH_WORDS = Pattern.compile(
             "(?i)\\b(?:cash|atm|withdrawal|withdrawn)\\b");
 
@@ -148,20 +156,39 @@ final class TransactionParser {
     }
 
     static String extractMerchant(String body, String sender) {
-        String merchant = "";
         if (body != null) {
             Matcher matcher = MERCHANT.matcher(body);
-            if (matcher.find()) {
-                merchant = matcher.group(1);
+            while (matcher.find()) {
+                String merchant = cleanMerchant(matcher.group(1));
+                if (usableMerchant(merchant)) {
+                    return merchant;
+                }
             }
         }
-        // "at SWIGGY on 12-11-2026" -> "SWIGGY".
-        merchant = merchant.replaceAll("(?i)\\s+(?:on|via|for|using|with|at|from|by|dated)\\b.*$", "");
-        merchant = merchant.replaceAll("^[^A-Za-z0-9]+|[^A-Za-z0-9&'.-]+$", "").trim();
-        if (merchant.length() > 40) {
-            merchant = merchant.substring(0, 40).trim();
+        return cleanSender(sender);
+    }
+
+    private static String cleanMerchant(String raw) {
+        Matcher stop = MERCHANT_STOP.matcher(raw);
+        String value = stop.find() ? raw.substring(0, stop.start()) : raw;
+        // "VPA merchant@okhdfcbank" -> "merchant".
+        int at = value.indexOf('@');
+        if (at > 0) {
+            value = value.substring(0, at);
         }
-        return merchant.isEmpty() ? cleanSender(sender) : merchant;
+        value = value.replaceFirst("(?i)^(?:vpa|upi|card)\\s+", "").trim();
+        value = value.replaceAll("^[^A-Za-z0-9]+|[^A-Za-z0-9&'.-]+$", "").trim();
+        value = value.replaceAll("\\.+$", "").trim();
+        return value.length() > 40 ? value.substring(0, 40).trim() : value;
+    }
+
+    private static boolean usableMerchant(String value) {
+        if (value.length() < 3 || ACCOUNTISH.matcher(value).find()) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return !lower.equals("upi") && !lower.equals("atm") && !lower.equals("bank")
+                && !lower.matches("hdfc|icici|sbi|axis|kotak|yes");
     }
 
     private static String cleanSender(String sender) {
@@ -177,34 +204,39 @@ final class TransactionParser {
 
     static String inferCategory(String body, String kind) {
         String lower = body == null ? "" : body.toLowerCase(Locale.ROOT);
-        if (containsAny(lower, "salary", "payroll", "paycheck", "pay cheque")) {
-            return "Salary";
-        }
-        if (containsAny(lower, "cashback", "cash back")) {
+        if ("income".equals(kind)) {
+            if (containsAny(lower, "salary", "payroll", "paycheck", "pay cheque")) return "Salary";
+            if (containsAny(lower, "freelance", "consulting", "invoice payment")) return "Freelance";
+            if (containsAny(lower, "business", "sales proceeds")) return "Business";
+            if (containsAny(lower, "rent received", "rental income")) return "Rent Received";
+            if (lower.contains("interest")) return "Interest";
+            if (lower.contains("dividend")) return "Dividends";
+            if (containsAny(lower, "gift", "cashback", "cash back", "refund")) return "Gifts";
             return "Other";
         }
-        if (containsAny(lower, "food", "restaurant", "swiggy", "zomato", "dining", "pizza", "cafe")) {
-            return "Dining";
-        }
+        if (containsAny(lower, "subscription", "renewal", "membership", "netflix", "spotify",
+                "prime video")) return "Subscriptions";
+        if (containsAny(lower, "rent", "maintenance", "society charge")) return "Housing";
+        if (containsAny(lower, "bill", "electricity", "water", "internet", "broadband",
+                "mobile", "recharge", "utility")) return "Utilities";
         if (containsAny(lower, "grocery", "groceries", "supermarket", "bigbasket", "blinkit")) {
             return "Groceries";
         }
-        if (containsAny(lower, "shopping", "amazon", "flipkart", "myntra", "store")) {
-            return "Shopping";
-        }
-        if (containsAny(lower, "fuel", "petrol", "diesel", "gas station")) {
-            return "Transport";
-        }
-        if (containsAny(lower, "bill", "electricity", "water", "internet", "broadband",
-                "mobile", "recharge", "utility")) {
-            return "Utilities";
-        }
-        if (containsAny(lower, "travel", "flight", "hotel", "train", "booking")) {
-            return "Travel";
-        }
-        if (containsAny(lower, "transfer", "upi", "neft", "imps")) {
-            return "Other";
-        }
+        if (containsAny(lower, "food", "restaurant", "swiggy", "zomato", "dining", "pizza",
+                "cafe")) return "Dining";
+        if (containsAny(lower, "shopping", "amazon", "flipkart", "myntra", "store")) return "Shopping";
+        if (containsAny(lower, "fuel", "petrol", "diesel", "gas station")) return "Transport";
+        if (containsAny(lower, "insurance", "premium", "policy")) return "Insurance";
+        if (containsAny(lower, "pharmacy", "medicine", "hospital", "doctor", "clinic",
+                "apollo", "netmeds", "1mg")) return "Health";
+        if (containsAny(lower, "school", "college", "tuition", "course", "udemy")) return "Education";
+        if (containsAny(lower, "movie", "bookmyshow", "game", "steam")) return "Entertainment";
+        if (containsAny(lower, "gym", "fitness", "salon", "spa")) return "Lifestyle";
+        if (containsAny(lower, "hobby", "hobbies", "craft")) return "Hobbies";
+        if (containsAny(lower, "mutual fund", "sip", "shares", "stock", "nps", "ppf",
+                "investment")) return "Investments";
+        if (containsAny(lower, "travel", "flight", "hotel", "train", "booking")) return "Travel";
+        if (containsAny(lower, "transfer", "upi", "neft", "imps")) return "Other";
         return "Other";
     }
 
