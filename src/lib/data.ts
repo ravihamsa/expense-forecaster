@@ -1131,26 +1131,31 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
     id: makeId(),
     user_id: user.id,
   }
-  if (usingSupabase && supabase) {
-    const { id: _id, created_at: _created, ...insertRow } = row
-    void _id
-    void _created
-    const { data, error } = await supabase
-      .from('budgets')
-      .upsert(insertRow, { onConflict: 'user_id,category,period,start_date' })
-      .select()
-      .single()
-    if (error) throw error
-    return ensureNumbers(data as unknown as Record<string, unknown>) as unknown as Budget
+  try {
+    if (usingSupabase && supabase) {
+      const { id: _id, created_at: _created, ...insertRow } = row
+      void _id
+      void _created
+      const { data, error } = await supabase
+        .from('budgets')
+        .upsert(insertRow, { onConflict: 'user_id,category,period,start_date' })
+        .select()
+        .single()
+      if (error) throw error
+      return ensureNumbers(data as unknown as Record<string, unknown>) as unknown as Budget
+    }
+    await updateLocal(user, (current) => ({
+      ...current,
+      budgets: [
+        row,
+        ...current.budgets.filter((budget) => budgetKey(budget) !== budgetKey(row)),
+      ].sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
+    }))
+    return row
+  } catch (caught) {
+    await deleteCashFlow(user, flow.id).catch(() => undefined)
+    throw caught
   }
-  await updateLocal(user, (current) => ({
-    ...current,
-    budgets: [
-      row,
-      ...current.budgets.filter((budget) => budgetKey(budget) !== budgetKey(row)),
-    ].sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
-  }))
-  return row
 }
 
 export async function updateBudget(user: AuthUser, id: string, patch: Partial<BudgetInput>): Promise<void> {
@@ -1159,35 +1164,42 @@ export async function updateBudget(user: AuthUser, id: string, patch: Partial<Bu
   const merged = normalizeBudgetInput({ ...current, ...patch })
 
   let cashFlowId = current.cash_flow_id || null
+  let createdFlowId: string | null = null
   const existingFlow = cashFlowId ? await findCashFlowForBudget(user, cashFlowId) : undefined
   if (cashFlowId && existingFlow) {
     await updateCashFlow(user, cashFlowId, budgetCashFlowInput(merged, existingFlow))
   } else {
     const flow = await addCashFlow(user, budgetCashFlowInput(merged))
     cashFlowId = flow.id
+    createdFlowId = flow.id
   }
 
   const budgetPatch: Partial<BudgetInput> = { ...patch, cash_flow_id: cashFlowId }
-  if (usingSupabase && supabase) {
-    const { error } = await supabase.from('budgets').update(budgetPatch).eq('id', id).eq('user_id', user.id)
-    if (error) throw error
-    return
+  try {
+    if (usingSupabase && supabase) {
+      const { error } = await supabase.from('budgets').update(budgetPatch).eq('id', id).eq('user_id', user.id)
+      if (error) throw error
+      return
+    }
+    await updateLocal(user, (data) => ({
+      ...data,
+      budgets: data.budgets
+        .map((budget) => {
+          if (budget.id !== id) return budget
+          const updated = normalizeBudgetInput({ ...budget, ...budgetPatch })
+          return {
+            ...updated,
+            id: budget.id,
+            user_id: budget.user_id,
+            created_at: budget.created_at,
+          }
+        })
+        .sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
+    }))
+  } catch (caught) {
+    if (createdFlowId) await deleteCashFlow(user, createdFlowId).catch(() => undefined)
+    throw caught
   }
-  await updateLocal(user, (data) => ({
-    ...data,
-    budgets: data.budgets
-      .map((budget) => {
-        if (budget.id !== id) return budget
-        const updated = normalizeBudgetInput({ ...budget, ...budgetPatch })
-        return {
-          ...updated,
-          id: budget.id,
-          user_id: budget.user_id,
-          created_at: budget.created_at,
-        }
-      })
-      .sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
-  }))
 }
 
 export async function deleteBudget(user: AuthUser, id: string): Promise<void> {

@@ -232,6 +232,7 @@ p { margin: 0; }
 .notice-banner div { flex: 1; }
 .notice-banner strong, .notice-banner span { display: block; font-size: 13px; }
 .notice-banner span { color: var(--muted); margin-top: 3px; }
+.sync-banner { margin-bottom: 18px; }
 
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
 .kpi-card { display: flex; flex-direction: column; gap: 9px; padding: 20px; border-radius: var(--radius); background: linear-gradient(160deg, rgba(20, 35, 48, 0.9), rgba(13, 24, 33, 0.9)); border: 1px solid var(--border); }

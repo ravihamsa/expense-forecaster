@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2 } from 'lucide-react'
 import AuthScreen from './components/AuthScreen'
 import CashFlowForm from './components/CashFlowForm'
@@ -35,6 +35,8 @@ export default function App() {
   const [quickAdd, setQuickAdd] = useState<FlowKind | null>(null)
   const [toast, setToast] = useState('')
   const [fatalError, setFatalError] = useState('')
+  const [syncError, setSyncError] = useState('')
+  const syncedUsers = useRef<Record<string, boolean>>({})
 
   const notify = useCallback((message: string) => setToast(message), [])
 
@@ -74,13 +76,35 @@ export default function App() {
   const refresh = useCallback(async (current: AuthUser) => {
     const fresh = await api.loadData(current)
     setData(fresh)
+    return fresh
   }, [])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || syncedUsers.current[user.id]) return
+    syncedUsers.current[user.id] = true
     let active = true
     setLoadingData(true)
+    setSyncError('')
     refresh(user)
+      .then(async (fresh) => {
+        const missing = fresh.budgets.filter((budget) => !budget.cash_flow_id)
+        for (const budget of missing) {
+          if (!active) return
+          try {
+            await api.updateBudget(user, budget.id, {})
+          } catch (caught) {
+            if (!active) return
+            const detail = caught instanceof Error ? caught.message : ''
+            setSyncError(
+              detail.toLowerCase().includes('cash_flow_id')
+                ? 'Planned spends need one more database upgrade. Run supabase/migrations/004_budget_cash_flows.sql in Supabase, then reload.'
+                : `Could not link a planned spend to Cash flow. ${detail}`.trim(),
+            )
+            return
+          }
+        }
+        if (active && missing.length) await refresh(user)
+      })
       .catch((caught: unknown) => {
         if (active) setFatalError(caught instanceof Error ? caught.message : 'Could not load your data.')
       })
@@ -183,6 +207,16 @@ export default function App() {
   return (
     <>
       <Layout user={user} activeTab={tab} onTabChange={setTab} onSignOut={handleSignOut}>
+        {syncError && (
+          <div className="notice-banner sync-banner">
+            <CheckCircle2 size={19} />
+            <div>
+              <strong>Planned spends are not linked to Cash flow yet.</strong>
+              <span>{syncError}</span>
+            </div>
+            <button className="btn btn-small btn-outline" onClick={() => window.location.reload()}>Reload</button>
+          </div>
+        )}
         {tab === 'dashboard' && (
           <Dashboard
             data={data}
