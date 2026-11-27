@@ -1,4 +1,10 @@
-import { budgetEventId, budgetOccurrenceDate, budgetPeriod, standaloneActualEventId } from './budgets'
+import {
+  budgetEventId,
+  budgetOccurrenceDate,
+  budgetPeriod,
+  matchBudgetActuals,
+  standaloneActualEventId,
+} from './budgets'
 import { fundAccountGoalId, goalFundAccountId } from './goals'
 import { monthKey, monthYearLabel } from './format'
 import { occurrencesInMonth } from './schedule'
@@ -285,6 +291,19 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     target[key] = (target[key] ?? 0) + amount
   }
 
+  // Recorded spends are paired with budgets before either is added to a month,
+  // so one Groceries spend replaces the Groceries plan instead of doubling it.
+  const budgetMonthViews = buckets.map((bucket, i) => {
+    const date = new Date(from.getFullYear(), from.getMonth() + i, 1)
+    return {
+      key: monthKey(date.getFullYear(), date.getMonth()),
+      year: date.getFullYear(),
+      monthIndex: date.getMonth(),
+      events: bucket.events,
+    }
+  })
+  const budgetMatches = matchBudgetActuals(data, budgetMonthViews)
+
   for (let i = 0; i < horizon; i += 1) {
     const date = new Date(from.getFullYear(), from.getMonth() + i, 1)
     const year = date.getFullYear()
@@ -371,8 +390,13 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
       const period = budgetPeriod(budget)
       const limit = Math.max(0, Number(budget.monthly_limit) || 0)
       const eventId = budgetEventId(budget, occurrence)
-      const actual = actualsByKey.get(eventId)
-      if (actual) usedActualIds.add(actual.id)
+      const eventActuals = budgetMatches.byEventId.get(eventId) ?? []
+      const hasActual = eventActuals.length > 0
+      const recorded = eventActuals.reduce(
+        (sum, item) => sum + Math.max(0, Number(item.amount) || 0),
+        0,
+      )
+      for (const actual of eventActuals) usedActualIds.add(actual.id)
       const cut = hasDiscretionary ? (isDiscretionary(budget.category) ? 1 - cutRate : 1) : 1 - cutRate
       const plannedBase = limit * inflationFactor * cut
       let eventAmount = 0
@@ -381,12 +405,12 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
         const carry = budget.rollover
           ? Math.max(-limit * 12, budgetCarry.get(budget.id) ?? 0)
           : 0
-        if (actual) {
-          // A recorded amount replaces the placeholder for this occurrence and
-          // its difference from the budget becomes the next month's carry.
+        if (hasActual) {
+          // Recorded spends replace the placeholder, and their difference from
+          // the budget becomes the next month's carry.
           const available = Math.max(0, limit + carry)
-          eventAmount = Math.max(0, Number(actual.amount) || 0)
-          budgetCarry.set(budget.id, budget.rollover ? available - eventAmount : 0)
+          eventAmount = recorded
+          budgetCarry.set(budget.id, budget.rollover ? available - recorded : 0)
         } else {
           // Positive carry stays available until it is actually spent. Negative
           // carry is absorbed by future allocations until it is worked off.
@@ -397,9 +421,9 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
           budgetCarry.set(budget.id, budget.rollover ? nextCarry : 0)
         }
       } else {
-        eventAmount = actual ? Math.max(0, actual.amount) : plannedBase
+        eventAmount = hasActual ? recorded : plannedBase
       }
-      if (eventAmount <= 0.005 && !actual) continue
+      if (eventAmount <= 0.005 && !hasActual) continue
 
       buckets[i].events.push({
         id: eventId,
@@ -412,8 +436,8 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
         budgetId: budget.id,
         date: occurrence,
         sourceMonth: currentKey,
-        actualAmount: actual?.amount,
-        actualId: actual?.id,
+        actualAmount: hasActual ? recorded : undefined,
+        actualId: eventActuals[0]?.id,
         canMove: false,
       })
       buckets[i].expenses += eventAmount
@@ -425,7 +449,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     // Recorded spends with no plan still move money, but they are not future
     // plans and never appear as a budgeted amount.
     for (const actual of actuals) {
-      if (usedActualIds.has(actual.id) || actual.kind !== 'expense') continue
+      if (usedActualIds.has(actual.id) || budgetMatches.matchedIds.has(actual.id) || actual.kind !== 'expense') continue
       if (monthOffset(actual.date, from) !== i) continue
       const amount = Math.max(0, Number(actual.amount) || 0)
       if (amount <= 0) continue

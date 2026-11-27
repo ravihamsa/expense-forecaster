@@ -2,6 +2,10 @@ import type { Actual, AppData, Budget, BudgetPeriod, FlowEvent, MonthProjection 
 
 const LEGACY_START_DATE = '1970-01-01'
 
+function normalized(value: string | undefined): string {
+  return (value ?? '').trim().toLowerCase()
+}
+
 /** One expense occurrence that feeds a budget month's spent amount. */
 export interface BudgetExpense {
   id: string
@@ -127,41 +131,86 @@ function yearlyCycleStartYear(startDate: string, month: BudgetMonthView): number
   return year >= startYear ? year : null
 }
 
-interface MonthActuals {
-  byEventId: Map<string, Actual>
+export interface BudgetActualMatches {
+  /** Recorded spends grouped by the exact budget occurrence they replace. */
+  byEventId: Map<string, Actual[]>
+  /** Every recorded spend already represented by a budget. */
+  matchedIds: Set<string>
 }
 
-type AssignedActuals = Map<string, Map<string, MonthActuals>>
+function addBudgetActual(matches: BudgetActualMatches, eventId: string, actual: Actual): void {
+  const eventActuals = matches.byEventId.get(eventId) ?? []
+  eventActuals.push(actual)
+  matches.byEventId.set(eventId, eventActuals)
+  matches.matchedIds.add(actual.id)
+}
 
-function assignActuals(data: AppData, months: BudgetMonthView[]): AssignedActuals {
-  const assigned: AssignedActuals = new Map()
-  const claimed = new Set<string>()
+/**
+ * Scores a standalone recorded spend against a plan. A category match is the
+ * minimum; a matching name wins when a category has several plans.
+ */
+function actualBudgetScore(actual: Actual, budget: Budget, occurrence: string): number {
+  const actualCategory = normalized(actual.category || 'Other')
+  const budgetCategory = normalized(budget.category || 'Other')
+  const actualName = normalized(actual.name)
+  const budgetName = normalized(budget.name)
+  const nameMatch = Boolean(actualName && budgetName && actualName === budgetName)
+  const categoryMatch = actualCategory === budgetCategory
+  if (!categoryMatch && !nameMatch) return -1
+
+  let score = categoryMatch ? 20 : 0
+  if (nameMatch) score += 100
+  else if (actualName && budgetName && (
+    actualName.includes(budgetName) || budgetName.includes(actualName)
+  )) score += 50
+  if (actual.date === occurrence) score += 10
+  if (budgetPeriod(budget) === 'one_time') score += 5
+  else if (budgetPeriod(budget) === 'yearly') score += 2
+  return score
+}
+
+/**
+ * Pairs recorded spends with budget occurrences. Exact event keys win first;
+ * unlinked spends (for example an SMS import) then match by category/name in
+ * the month of the spend, so they replace a plan rather than appearing twice.
+ */
+export function matchBudgetActuals(data: AppData, months: BudgetMonthView[]): BudgetActualMatches {
+  const matches: BudgetActualMatches = { byEventId: new Map(), matchedIds: new Set() }
   const expenses = (data.actuals ?? []).filter((actual) => actual.kind === 'expense')
 
-  // Migration re-keys recorded spends to the exact budget occurrence they
-  // replace. Only those direct matches count toward a budget.
   for (const month of months) {
     for (const budget of data.budgets ?? []) {
-      let byBudget = assigned.get(budget.id)
-      if (!byBudget) {
-        byBudget = new Map()
-        assigned.set(budget.id, byBudget)
-      }
-      let bucket = byBudget.get(month.key)
-      if (!bucket) {
-        bucket = { byEventId: new Map() }
-        byBudget.set(month.key, bucket)
-      }
-      for (const event of budgetEvents(month, budget)) {
-        const actual = expenses.find((entry) => !claimed.has(entry.id) && entry.event_key === event.id)
-        if (!actual) continue
-        claimed.add(actual.id)
-        bucket.byEventId.set(event.id, actual)
+      const occurrence = budgetOccurrenceDate(budget, month)
+      if (!occurrence) continue
+      const eventId = budgetEventId(budget, occurrence)
+      for (const actual of expenses) {
+        if (matches.matchedIds.has(actual.id)) continue
+        if (actual.event_key === eventId) addBudgetActual(matches, eventId, actual)
       }
     }
   }
 
-  return assigned
+  for (const actual of expenses) {
+    if (matches.matchedIds.has(actual.id)) continue
+    const month = months.find((entry) => entry.key === actual.date.slice(0, 7))
+    if (!month) continue
+
+    let best: { budget: Budget; eventId: string; score: number } | null = null
+    for (const budget of data.budgets ?? []) {
+      const occurrence = budgetOccurrenceDate(budget, month)
+      if (!occurrence || actual.date < occurrence) continue
+      const score = actualBudgetScore(actual, budget, occurrence)
+      if (score < 0) continue
+      const eventId = budgetEventId(budget, occurrence)
+      if (!best || score > best.score
+        || (score === best.score && budget.id.localeCompare(best.budget.id) < 0)) {
+        best = { budget, eventId, score }
+      }
+    }
+    if (best) addBudgetActual(matches, best.eventId, actual)
+  }
+
+  return matches
 }
 
 /**
@@ -171,7 +220,7 @@ function assignActuals(data: AppData, months: BudgetMonthView[]): AssignedActual
  * a future plan is never reported as money already spent.
  */
 export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): BudgetStatus[] {
-  const assigned = assignActuals(data, months)
+  const matches = matchBudgetActuals(data, months)
   const accountNames = new Map((data.accounts ?? []).map((account) => [account.id, account.name]))
 
   return (data.budgets ?? []).map((budget) => {
@@ -186,9 +235,7 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
 
     const rows = months.map((month) => {
       const events = budgetEvents(month, budget)
-      const bucket = assigned.get(budget.id)?.get(month.key)
-      const eventActuals = bucket?.byEventId ?? new Map<string, Actual>()
-      const monthActuals = [...eventActuals.values()]
+      const monthActuals = events.flatMap((event) => matches.byEventId.get(event.id) ?? [])
       const hasRecorded = monthActuals.length > 0
       const planned = plannedAmount(events)
       const recorded = monthActuals.reduce((sum, actual) => sum + Math.max(0, actual.amount), 0)
@@ -236,31 +283,29 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
       const accountLabel = (value: string | undefined): string => (
         value ? accountNames.get(value) ?? value : ''
       )
-      const actualSource = (actual: Actual): string => (
-        actual.source === 'sms' ? 'SMS import' : 'Actual'
-      )
-
-      const expenses: BudgetExpense[] = [
-        ...events.map((event) => {
-          const actual = eventActuals.get(event.id)
+      const expenses: BudgetExpense[] = events
+        .map((event) => {
+          const actuals = matches.byEventId.get(event.id) ?? []
+          const actualTotal = actuals.reduce((sum, item) => sum + Math.max(0, item.amount), 0)
           const counted = period === 'monthly'
-            ? actual?.amount ?? (hasRecorded ? 0 : event.amount)
+            ? (actuals.length ? actualTotal : hasRecorded ? 0 : event.amount)
             : active
-              ? actual?.amount ?? 0
+              ? actualTotal
               : 0
           return {
             id: event.id,
             name: event.name,
             date: event.date,
             planned: event.amount,
-            recorded: actual?.amount,
+            recorded: actuals.length ? actualTotal : undefined,
             counted,
-            accountLabel: accountLabel(actual?.account ?? event.account),
-            note: actual?.note ?? '',
-            source: actual ? actualSource(actual) : 'Planned',
+            accountLabel: accountLabel(actuals[0]?.account ?? event.account),
+            note: actuals.map((item) => item.note).filter(Boolean).join('; '),
+            source: actuals.length
+              ? actuals.some((item) => item.source === 'sms') ? 'SMS import' : 'Actual'
+              : 'Planned',
           }
-        }),
-      ]
+        })
         .filter((item) => item.counted > 0)
         .sort((a, b) => b.counted - a.counted || a.date.localeCompare(b.date) || a.name.localeCompare(b.name))
 
