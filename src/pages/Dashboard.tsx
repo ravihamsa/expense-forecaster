@@ -58,6 +58,8 @@ function ForecastTooltip({
       <div><span>Net this month</span><b className={month.net >= 0 ? 'positive' : 'negative'}>{formatSigned(month.net, currency)}</b></div>
       <div><span>Carried in</span><b>{formatMoney(month.openingBalance, currency)}</b></div>
       <div><span>Carried forward</span><b>{formatMoney(month.closingBalance, currency)}</b></div>
+      <div><span>To savings funds</span><b>{formatMoney(month.savingsContributions, currency)}</b></div>
+      <div><span>Spendable balance</span><b>{formatMoney(month.spendableBalance, currency)}</b></div>
       <div><span>Planned income</span><b>{formatMoney(month.income + month.loanInflows, currency)}</b></div>
       <div><span>Planned spends</span><b>{formatMoney(month.expenses + month.loanPayments, currency)}</b></div>
     </div>
@@ -84,10 +86,11 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
     }, 0)
   const loanTotals = summarizeLoans(loans)
   const monthlyExpenses = cashFlowExpenses + loanTotals.monthlyEmi
+  const monthlySavings = (data.goals ?? []).reduce((sum, goal) => sum + Math.max(0, goal.monthly_contribution), 0)
 
   const firstMonthKey = simulation.months[0]?.key ?? ''
   const plannedIncome = firstMonthKey ? expectedMonthlyIncome(data, firstMonthKey) : 0
-  const netMonthly = plannedIncome + loanTotals.monthlyReceivable - monthlyExpenses
+  const netMonthly = plannedIncome + loanTotals.monthlyReceivable - monthlyExpenses - monthlySavings
   const deficitMonths = simulation.months.filter((month) => month.net < 0)
   const surplusMonths = simulation.months.filter((month) => month.net >= 0)
 
@@ -194,7 +197,7 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
           <div className={`kpi-icon ${netMonthly >= 0 ? 'kpi-green' : 'kpi-red'}`}><TrendingUp size={19} /></div>
           <span className="kpi-label">Needed / free</span>
           <strong className={`kpi-value ${netMonthly >= 0 ? 'positive' : 'negative'}`}>{formatSigned(netMonthly, currency)}</strong>
-          <span className="kpi-foot">Extra needed, or free for unplanned spends</span>
+          <span className="kpi-foot">After planned spends and savings funds</span>
         </article>
         <article className="kpi-card">
           <div className="kpi-icon kpi-amber"><Landmark size={19} /></div>
@@ -220,12 +223,13 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
         <div className="card-head">
           <div>
             <h2>Cash flow forecast</h2>
-            <p>Monthly net (bars) and money carried forward (line) · includes your opening balance · click a bar to preview its cash flows</p>
+            <p>Monthly net (bars), money carried forward and spendable balance (lines) · includes your opening balance</p>
           </div>
           <div className="chart-legend">
             <span><i className="legend-dot legend-green" /> Surplus</span>
             <span><i className="legend-dot legend-red" /> Deficit</span>
-            <span><i className="legend-line" /> Balance</span>
+            <span><i className="legend-line" /> Carried forward</span>
+            <span><i className="legend-line legend-line-dashed" /> Spendable</span>
           </div>
         </div>
         <div className="chart-wrap">
@@ -250,6 +254,7 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
                 ))}
               </Bar>
               <Line type="monotone" dataKey="closingBalance" stroke="#7aa7ff" strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="spendableBalance" stroke="#ffc978" strokeWidth={2} strokeDasharray="5 4" dot={false} activeDot={{ r: 4 }} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -257,6 +262,7 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
           <div><span className="summary-pip pip-red" /><strong>{deficitMonths.length}</strong> net-deficit month{deficitMonths.length === 1 ? '' : 's'}</div>
           <div><span className="summary-pip pip-green" /><strong>{surplusMonths.length}</strong> net-surplus month{surplusMonths.length === 1 ? '' : 's'}</div>
           <div><span className="summary-pip pip-blue" />Lowest carried balance <strong>{formatMoney(simulation.lowestBalance, currency)}</strong></div>
+          <div>Lowest spendable <strong>{formatMoney(simulation.lowestSpendable, currency)}</strong></div>
           <div>Carried to end <strong>{formatMoney(simulation.endingBalance, currency)}</strong></div>
           <button className="link-button" onClick={() => onNavigate('balance')}>Open balance plan <ChevronRight size={15} /></button>
         </div>

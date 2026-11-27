@@ -30,7 +30,7 @@ you can try everything immediately — data is stored in that browser only.
   - Delete offers **just this date** (skips one occurrence, with a restore chip) or **whole entry** (deletes the underlying recurring cash flow). For expected monthly income the choices are **just this month** or **from this month onward**.
   - Recorded actuals are shown with a check on the calendar chip and feed budgets and the Actual vs plan page.
 - Budgets with monthly, yearly and one-time allocations. Monthly limits can roll forward; dated allocations count only recorded actuals, so a future plan is never shown as spent. Future-dated expense cash flows appear as allocations too, and actual amounts can only be recorded on or after the planned date.
-- Goals & sinking funds: target, current savings, monthly contribution and target month, with required monthly amount, projected gap and a check against the average forecast surplus.
+- Savings funds: target, current savings, monthly contribution and target month. Monthly contributions appear in Cash flow and Month preview as net-neutral transfers into the fund, reducing spendable cash without changing net worth. Actual contributions are recorded as balanced transfers.
 - Planned vs actual: record the real amount for any forecast occurrence from the calendar or the Actual vs plan page, or import a CSV with `date,name,amount` columns. Only rows that match a planned occurrence are imported.
 - Loans with original amount, outstanding balance, interest rate, EMI, due day and tenure.
   - amortisation-based payoff estimates

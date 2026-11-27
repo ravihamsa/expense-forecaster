@@ -155,6 +155,8 @@ export default function App() {
       upsertGoal: (input) => run(() => api.upsertGoal(user!, input).then(() => undefined), 'Goal added.'),
       updateGoal: (id, patch) => run(() => api.updateGoal(user!, id, patch), 'Goal updated.'),
       deleteGoal: (id) => run(() => api.deleteGoal(user!, id), 'Goal removed.'),
+      contributeToGoal: (id, amount, fromAccount) =>
+        run(() => api.contributeToGoal(user!, id, amount, fromAccount), 'Contribution recorded.'),
       upsertActual: (input) => run(() => api.upsertActual(user!, input).then(() => undefined), 'Actual amount saved.'),
       deleteActual: (id) => run(() => api.deleteActual(user!, id), 'Actual amount removed.'),
       deleteSmsImports: () => run(() => api.deleteSmsImports(user!), 'SMS imports removed.'),

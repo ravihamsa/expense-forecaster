@@ -1,3 +1,4 @@
+import { fundAccountGoalId, goalFundAccountId } from './goals'
 import { monthKey, monthYearLabel } from './format'
 import { occurrencesInMonth } from './schedule'
 import type {
@@ -7,9 +8,11 @@ import type {
   CashFlowMove,
   CashFlowSkip,
   FlowEvent,
+  Goal,
   Loan,
   LoanPayment,
   MonthProjection,
+  SavingsEvent,
   Simulation,
   SimulationOptions,
 } from './types'
@@ -144,6 +147,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     cashFlowMoves = [],
     cashFlowSkips = [],
     actuals = [],
+    goals = [],
     loans = [],
     loanPayments = [],
   } = data
@@ -185,6 +189,31 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
   if (accounts.length === 0) accountBalances.bank = Math.max(0, profile.opening_balance || 0)
   if (accountBalances.bank === undefined) accountBalances.bank = 0
   if (accountBalances.cash === undefined) accountBalances.cash = 0
+
+  // Savings funds are destination accounts. A fund with no real account gets a
+  // virtual one, opened with the amount already saved minus recorded transfers.
+  const fundAccounts = new Map<string, Goal>()
+  goals.forEach((goal) => fundAccounts.set(goalFundAccountId(goal, accounts), goal))
+  const recordedFundTotals = new Map<string, number>()
+  const recordedFundByMonth = new Map<string, number>()
+  ;(transfers ?? []).forEach((transfer) => {
+    const goalId = fundAccountGoalId(transfer.to_account, goals, accounts)
+    if (!goalId) return
+    const amount = Math.max(0, Number(transfer.amount) || 0)
+    if (amount <= 0) return
+    recordedFundTotals.set(goalId, (recordedFundTotals.get(goalId) ?? 0) + amount)
+    const offset = monthOffset(transfer.date, from)
+    if (Number.isInteger(offset) && offset >= 0 && offset < horizon) {
+      const key = `${goalId}|${offset}`
+      recordedFundByMonth.set(key, (recordedFundByMonth.get(key) ?? 0) + amount)
+    }
+  })
+  fundAccounts.forEach((goal, accountId) => {
+    if (accountBalances[accountId] !== undefined) return
+    const alreadySaved = Math.max(0, Number(goal.current_amount) || 0)
+    const recorded = recordedFundTotals.get(goal.id) ?? 0
+    accountBalances[accountId] = Math.max(0, alreadySaved - recorded)
+  })
   const openingTotal = Object.values(accountBalances).reduce((sum, value) => sum + value, 0)
 
   const transfersByMonth = new Map<number, { from: string; to: string; amount: number }[]>()
@@ -218,6 +247,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
   let surplusMonths = 0
   let totalDeficit = 0
   let lowestBalance = runningBalance
+  let lowestSpendable = runningBalance
   const payoffMap = new Map<string, { loanId: string; name: string; monthIndex: number; label: string }>()
 
   function markPaidOff(loan: Loan, opening: number, closing: number, index: number, year: number, month: number) {
@@ -470,6 +500,37 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
       }
     }
 
+    // Savings-fund contributions are planned transfers: they leave spendable
+    // cash and grow the fund, without changing total net worth.
+    const savingsEvents: SavingsEvent[] = []
+    let savingsContributions = 0
+    for (const [fundAccount, goal] of fundAccounts) {
+      const monthly = Math.max(0, Number(goal.monthly_contribution) || 0)
+      const target = Math.max(0, Number(goal.target_amount) || 0)
+      const fundBalance = accountBalances[fundAccount] ?? 0
+      const remaining = Math.max(0, target - fundBalance)
+      if (monthly <= 0 || remaining <= 0) continue
+      const recorded = recordedFundByMonth.get(`${goal.id}|${i}`) ?? 0
+      const planned = Math.min(
+        Math.max(0, monthly - recorded),
+        Math.max(0, remaining - recorded),
+      )
+      if (planned <= 0.005) continue
+      const source = accountBalances.bank !== undefined ? 'bank' : 'cash'
+      addDelta(deltas, source, -planned)
+      addDelta(deltas, fundAccount, planned)
+      savingsContributions += planned
+      savingsEvents.push({
+        id: `savings-${goal.id}-${i}`,
+        goalId: goal.id,
+        name: goal.name,
+        amount: planned,
+        date: dayInMonth(year, month, 1),
+        from_account: source,
+        to_account: fundAccount,
+      })
+    }
+
     // Transfers are net-neutral: they only move money between account buckets.
     ;(transfersByMonth.get(i) ?? []).forEach((transfer) => {
       addDelta(deltas, transfer.from, -transfer.amount)
@@ -482,7 +543,16 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     const net = income + loanInflow - expenses - loanOutflow - extraPayment
     const openingBalance = runningBalance
     const closingBalance = Object.values(accountBalances).reduce((sum, value) => sum + value, 0)
+    const fundBalances: Record<string, number> = {}
+    let fundTotal = 0
+    fundAccounts.forEach((_goal, accountId) => {
+      const balance = Math.max(0, accountBalances[accountId] ?? 0)
+      fundBalances[accountId] = balance
+      fundTotal += balance
+    })
+    const spendableBalance = closingBalance - fundTotal
     runningBalance = closingBalance
+    lowestSpendable = Math.min(lowestSpendable, spendableBalance)
     const monthAccountBalances = { ...accountBalances }
 
     const loanBalances: Record<string, number> = {}
@@ -504,6 +574,10 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
       openingBalance,
       closingBalance,
       accountBalances: monthAccountBalances,
+      fundBalances,
+      spendableBalance,
+      savingsContributions,
+      savingsEvents,
       cumulativeNet: closingBalance - openingTotal,
       events,
       activeLoans: activeLoans.length,
@@ -538,7 +612,9 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     surplusMonths,
     totalDeficit,
     endingBalance: runningBalance,
+    endingSpendable: months.length ? months[months.length - 1].spendableBalance : 0,
     lowestBalance,
+    lowestSpendable,
     accountBalances: { ...accountBalances },
     payoff: Array.from(payoffMap.values()).sort((a, b) => a.monthIndex - b.monthIndex),
   }

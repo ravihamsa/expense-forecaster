@@ -88,6 +88,7 @@ export function accountLabel(account: string, data: AppData): string {
     return `${name} (owed to you)`
   }
   if (prefix === 'income' || prefix === 'expense') return `${prefix === 'income' ? 'Income' : 'Expense'} · ${value}`
+  if (prefix === 'fund') return data.goals?.find((goal) => goal.id === value)?.name ?? 'Savings fund'
   return value || prefix
 }
 

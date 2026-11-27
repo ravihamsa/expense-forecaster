@@ -1,4 +1,4 @@
-import type { AppData, Goal, Simulation } from './types'
+import type { Account, AppData, Goal, Simulation } from './types'
 
 export interface GoalStatus {
   goal: Goal
@@ -9,6 +9,30 @@ export interface GoalStatus {
   projectedGap: number
   progress: number
   onTrack: boolean
+}
+
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/**
+ * Every savings fund has one destination account. Reuse a real custom account
+ * with the same name when the user already created one; otherwise the fund gets
+ * its own virtual account so contributions stay net-neutral.
+ */
+export function goalFundAccountId(goal: Goal, accounts: Account[] = []): string {
+  const named = accounts.find(
+    (account) => account.kind === 'other' && normalizeName(account.name) === normalizeName(goal.name),
+  )
+  return named?.id ?? `fund:${goal.id}`
+}
+
+export function fundAccountGoalId(account: string, goals: Goal[], accounts: Account[] = []): string | null {
+  if (account.startsWith('fund:')) {
+    const id = account.slice('fund:'.length)
+    return goals.some((goal) => goal.id === id) ? id : null
+  }
+  return goals.find((goal) => goalFundAccountId(goal, accounts) === account)?.id ?? null
 }
 
 export interface GoalsSummary {

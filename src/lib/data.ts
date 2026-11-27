@@ -1,5 +1,6 @@
 import { budgetKey } from './budgets'
 import { defaultCategories, defaultCategoryId } from './categories'
+import { goalFundAccountId } from './goals'
 import { toDateInputValue } from './schedule'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
 import type {
@@ -1268,6 +1269,65 @@ export async function deleteGoal(user: AuthUser, id: string): Promise<void> {
   await updateLocal(user, (data) => ({
     ...data,
     goals: data.goals.filter((goal) => goal.id !== id),
+  }))
+}
+
+/** Record an actual set-aside as one balanced transfer into the fund. */
+export async function contributeToGoal(
+  user: AuthUser,
+  id: string,
+  amount: number,
+  fromAccount = 'bank',
+): Promise<void> {
+  const value = Math.max(0, Number(amount) || 0)
+  if (value <= 0) throw new Error('Enter an amount greater than zero.')
+
+  const current = await loadData(user)
+  const goal = current.goals.find((entry) => entry.id === id)
+  if (!goal) throw new Error('That savings fund no longer exists.')
+  const toAccount = goalFundAccountId(goal, current.accounts)
+  if (fromAccount === toAccount) throw new Error('Choose a different account to contribute from.')
+
+  const row: Transfer = {
+    id: makeId(),
+    user_id: user.id,
+    from_account: fromAccount,
+    to_account: toAccount,
+    amount: value,
+    date: toDateInputValue(),
+    note: `Savings fund · ${goal.name}`,
+    created_at: new Date().toISOString(),
+  }
+  const updatedAmount = Math.max(0, Number(goal.current_amount) || 0) + value
+
+  if (usingSupabase && supabase) {
+    const { id: _id, created_at: _created, ...insertRow } = row
+    void _id
+    void _created
+    const { data: transfer, error: transferError } = await supabase
+      .from('transfers')
+      .insert(insertRow)
+      .select()
+      .single()
+    if (transferError) throw transferError
+    const { error: goalError } = await supabase
+      .from('goals')
+      .update({ current_amount: updatedAmount })
+      .eq('id', id)
+      .eq('user_id', user.id)
+    if (goalError) {
+      await supabase.from('transfers').delete().eq('id', transfer.id).eq('user_id', user.id)
+      throw goalError
+    }
+    return
+  }
+
+  await updateLocal(user, (data) => ({
+    ...data,
+    transfers: [row, ...data.transfers],
+    goals: data.goals.map((entry) => (
+      entry.id === id ? { ...entry, current_amount: updatedAmount } : entry
+    )),
   }))
 }
 

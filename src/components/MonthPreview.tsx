@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import { formatMoney, formatSigned } from '../lib/format'
+import { accountLabel } from '../lib/ledger'
 import type { AppActions, AppData, FlowEvent, MonthProjection } from '../lib/types'
 
 interface Props {
@@ -131,6 +132,7 @@ export default function MonthPreview({
   const outgoing = events.filter((event) => event.kind === 'expense')
   const moneyIn = month.income + month.loanInflows
   const moneyOut = month.expenses + month.loanPayments
+  const monthlyFree = month.net - month.savingsContributions
 
   function renderEvent(event: FlowEvent) {
     const isLoan = event.source === 'loan' || event.source === 'extra_payment'
@@ -207,8 +209,8 @@ export default function MonthPreview({
           <p>Every planned cash flow on its actual date · edit monthly income or any month's amount inline</p>
         </div>
         <div className="preview-controls">
-          <span className={`status-pill ${month.net >= 0 ? 'pill-green' : 'pill-red'}`}>
-            {month.net >= 0 ? 'Surplus' : 'Deficit'}
+          <span className={`status-pill ${month.spendableBalance >= 0 ? 'pill-green' : 'pill-red'}`}>
+            {month.spendableBalance >= 0 ? 'Surplus' : 'Deficit'}
           </span>
           <div className="month-stepper">
             <button className="icon-button" aria-label="Previous month" title="Previous month" onClick={() => moveMonth(-1)} disabled={index <= 0}><ChevronLeft size={15} /></button>
@@ -234,12 +236,16 @@ export default function MonthPreview({
         <div><span>Money in</span><strong className="positive">{formatMoney(moneyIn, currency)}</strong></div>
         <div><span>Planned spends</span><strong>{formatMoney(month.expenses, currency)}</strong></div>
         <div><span>Loan payments</span><strong>{formatMoney(month.loanPayments, currency)}</strong></div>
-        <div><span>Needed / free</span><strong className={month.net >= 0 ? 'positive' : 'negative'}>{formatSigned(month.net, currency)}</strong></div>
+        <div><span>To savings funds</span><strong>{formatMoney(month.savingsContributions, currency)}</strong></div>
+        <div><span>Needed / free</span><strong className={monthlyFree >= 0 ? 'positive' : 'negative'}>{formatSigned(monthlyFree, currency)}</strong></div>
         <div><span>Carried forward</span><strong className={month.closingBalance >= 0 ? 'positive' : 'negative'}>{formatMoney(month.closingBalance, currency)}</strong></div>
+        <div><span>Spendable balance</span><strong className={month.spendableBalance >= 0 ? 'positive' : 'negative'}>{formatMoney(month.spendableBalance, currency)}</strong></div>
       </div>
       <p className="preview-balance-note">
         Carried forward {formatMoney(month.openingBalance, currency)} + money in {formatMoney(moneyIn, currency)}
         − money out {formatMoney(moneyOut, currency)} = {formatMoney(month.closingBalance, currency)} into next month.
+        savings contributions move {formatMoney(month.savingsContributions, currency)} into funds, leaving
+        {' '}{formatMoney(month.spendableBalance, currency)} spendable.
       </p>
 
       <div className="preview-columns">
@@ -251,6 +257,24 @@ export default function MonthPreview({
           {outgoing.length
             ? outgoing.map(renderEvent)
             : <p className="preview-empty">Nothing scheduled to pay this month.</p>}
+          {month.savingsEvents.length > 0 && (
+            <>
+              <div className="preview-column-head preview-subhead">
+                <span className="mini-subhead">To savings funds · {month.savingsEvents.length}</span>
+                <strong className="negative">−{formatMoney(month.savingsContributions, currency)}</strong>
+              </div>
+              {month.savingsEvents.map((event) => (
+                <div className="preview-row" key={event.id}>
+                  <span className="preview-date">{shortDate(event.date)}</span>
+                  <div className="preview-event">
+                    <strong>{event.name}</strong>
+                    <span>To {accountLabel(event.to_account, data)} · from {accountLabel(event.from_account, data)}</span>
+                  </div>
+                  <b className="negative">−{formatMoney(event.amount, currency)}</b>
+                </div>
+              ))}
+            </>
+          )}
         </div>
         <div className="preview-column">
           <div className="preview-column-head">
@@ -262,7 +286,7 @@ export default function MonthPreview({
       </div>
 
       <div className="preview-footer">
-        <span>Balance at month end: <strong>{formatMoney(month.closingBalance, currency)}</strong></span>
+        <span>Balance at month end: <strong>{formatMoney(month.closingBalance, currency)}</strong> · Spendable: <strong>{formatMoney(month.spendableBalance, currency)}</strong></span>
         <div className="preview-footer-actions">
           <button className="btn btn-outline btn-small" onClick={onAddIncome}><Plus size={14} /> Add income</button>
           <button className="btn btn-outline btn-small" onClick={onAddExpense}><Plus size={14} /> Add planned spend</button>

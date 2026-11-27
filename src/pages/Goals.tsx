@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CheckCircle2, CircleAlert, Pencil, Plus, Target, Trash2 } from 'lucide-react'
 import Modal from '../components/Modal'
-import { buildGoalsSummary, type GoalStatus } from '../lib/goals'
+import { buildGoalsSummary, goalFundAccountId, type GoalStatus } from '../lib/goals'
 import { formatMoney, formatSigned } from '../lib/format'
 import type { AppActions, AppData, Goal, NewGoal, Simulation } from '../lib/types'
 
@@ -33,10 +33,16 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
   const [modal, setModal] = useState<ModalState | null>(null)
   const [form, setForm] = useState<NewGoal>(blankGoal())
   const [contribution, setContribution] = useState('')
+  const [contributionFrom, setContributionFrom] = useState('bank')
   const [busy, setBusy] = useState(false)
 
   const summary = useMemo(() => buildGoalsSummary(data, simulation), [data, simulation])
   const completed = summary.statuses.filter((status) => status.remaining <= 0).length
+  const accounts = data.accounts ?? []
+  const accountName = (id: string): string => accounts.find((account) => account.id === id)?.name ?? id
+  const contributionDestination = modal?.mode === 'contribute'
+    ? goalFundAccountId(modal.goal, accounts)
+    : ''
 
   function openAdd() {
     setForm(blankGoal())
@@ -57,6 +63,10 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
 
   function openContribute(goal: Goal) {
     setContribution(String(goal.monthly_contribution || 0))
+    const destination = goalFundAccountId(goal, data.accounts ?? [])
+    const source = (data.accounts ?? []).find((account) => account.id === 'bank' && account.id !== destination)
+      ?? (data.accounts ?? []).find((account) => account.id !== destination)
+    setContributionFrom(source?.id ?? 'bank')
     setModal({ mode: 'contribute', goal })
   }
 
@@ -70,10 +80,8 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
       }
       try {
         setBusy(true)
-        await actions.updateGoal(modal.goal.id, {
-          current_amount: Math.max(0, modal.goal.current_amount + amount),
-        })
-        onNotify(`${formatMoney(amount, currency)} added to ${modal.goal.name}.`)
+        await actions.contributeToGoal(modal.goal.id, amount, contributionFrom)
+        onNotify(`${formatMoney(amount, currency)} moved into ${modal.goal.name}.`)
         setModal(null)
       } catch (caught) {
         onNotify(caught instanceof Error ? caught.message : 'Could not add the contribution.')
@@ -122,7 +130,7 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
         <div>
           <span className="eyebrow">Plan</span>
           <h1>Savings funds</h1>
-          <p>Track progress toward a target and check whether your monthly contributions fit the forecast.</p>
+          <p>Track progress toward a target. Monthly contributions now move money into each fund, so they show in the forecast without reducing net worth.</p>
         </div>
         <div className="header-actions">
           <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Add fund</button>
@@ -169,7 +177,7 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
           title={modal.mode === 'contribute' ? `Contribute to ${modal.goal.name}` : modal.mode === 'edit' ? 'Edit goal' : 'Add goal'}
           subtitle={modal.mode === 'contribute'
             ? `Currently ${formatMoney(modal.goal.current_amount, currency)} of ${formatMoney(modal.goal.target_amount, currency)}.`
-            : 'Goals are tracked alongside the forecast; contributions do not change your projected balance.'}
+            : 'Monthly contributions appear in Cash flow, Month preview and the forecast as transfers into the fund.'}
           onClose={() => setModal(null)}
         >
           {modal.mode === 'contribute' ? (
@@ -178,7 +186,20 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
                 <span>Amount ({currency})</span>
                 <input type="number" min="0.01" step="0.01" value={contribution} onChange={(event) => setContribution(event.target.value)} />
               </label>
-              <p className="helper-text">Use “Add goal contribution” to record money you have actually set aside.</p>
+              <label className="field">
+                <span>From account</span>
+                <select value={contributionFrom} onChange={(event) => setContributionFrom(event.target.value)}>
+                  {accounts
+                    .filter((account) => account.id !== contributionDestination)
+                    .map((account) => (
+                      <option key={account.id} value={account.id}>{account.name}</option>
+                    ))}
+                </select>
+              </label>
+              <p className="helper-text">
+                Recorded as one balanced transfer into {accountName(contributionDestination) || modal.goal.name}.
+                Net worth stays the same; spendable cash goes down.
+              </p>
             </div>
           ) : (
             <div className="form-grid">

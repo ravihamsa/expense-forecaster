@@ -3,6 +3,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   CalendarDays,
+  PiggyBank,
   Pencil,
   Plus,
   Search,
@@ -11,6 +12,7 @@ import {
 import Modal from '../components/Modal'
 import CashFlowForm from '../components/CashFlowForm'
 import { isSmsImport } from '../lib/data'
+import { goalFundAccountId } from '../lib/goals'
 import { formatDate, formatMoney } from '../lib/format'
 import { nextOccurrence, recurrenceLabel, toDateInputValue } from '../lib/schedule'
 import type { AppActions, AppData, CashFlow, FlowKind, NewCashFlow } from '../lib/types'
@@ -48,6 +50,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
 
   const monthlyIncome = data.cashFlows.filter((flow) => flow.kind === 'income').reduce((sum, flow) => sum + monthlyValue(flow), 0)
   const monthlyExpense = data.cashFlows.filter((flow) => flow.kind === 'expense').reduce((sum, flow) => sum + monthlyValue(flow), 0)
+  const monthlySavings = (data.goals ?? []).reduce((sum, goal) => sum + Math.max(0, goal.monthly_contribution), 0)
   const scheduledCount = data.cashFlows.filter((flow) => {
     const next = nextOccurrence(flow)
     return next !== null && flow.recurrence !== 'monthly'
@@ -103,8 +106,38 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
       <section className="stat-strip">
         <div><span>Recurring income / mo</span><strong className="positive">{formatMoney(monthlyIncome, currency)}</strong></div>
         <div><span>Recurring spends / mo</span><strong className="negative">−{formatMoney(monthlyExpense, currency)}</strong></div>
+        <div><span>To savings funds / mo</span><strong>{formatMoney(monthlySavings, currency)}</strong></div>
         <div><span>Scheduled plans</span><strong>{scheduledCount}</strong></div>
         <div><span>Total entries</span><strong>{data.cashFlows.length}</strong></div>
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2>Savings funds</h2>
+            <p>Planned contributions move into the fund. They reduce spendable cash, not your net worth.</p>
+          </div>
+        </div>
+        {(data.goals ?? []).length ? (
+          <div className="flow-list">
+            {(data.goals ?? []).map((goal) => {
+              const destination = goalFundAccountId(goal, data.accounts ?? [])
+              const destinationName = data.accounts?.find((account) => account.id === destination)?.name ?? goal.name
+              return (
+                <div className="flow-row" key={goal.id}>
+                  <span className="flow-icon"><PiggyBank size={18} /></span>
+                  <div className="flow-main">
+                    <strong>{goal.name}</strong>
+                    <span>Planned transfer into {destinationName} · {formatMoney(goal.current_amount, currency)} of {formatMoney(goal.target_amount, currency)} saved</span>
+                  </div>
+                  <strong className="flow-amount">−{formatMoney(goal.monthly_contribution, currency)} / mo</strong>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="preview-empty">No savings funds yet. Add one on the Savings funds page to see its monthly contribution here.</p>
+        )}
       </section>
 
       <section className="card">

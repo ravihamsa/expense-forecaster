@@ -323,6 +323,17 @@ export interface FlowEvent {
   skipped?: boolean
 }
 
+/** A planned monthly move into a savings fund, shown separately from spends. */
+export interface SavingsEvent {
+  id: string
+  goalId: string
+  name: string
+  amount: number
+  date: string
+  from_account: string
+  to_account: string
+}
+
 export interface MonthProjection {
   key: string
   label: string
@@ -338,6 +349,13 @@ export interface MonthProjection {
   closingBalance: number
   /** Projected balance of every account at month end. */
   accountBalances: Record<string, number>
+  /** Balances of savings-fund accounts only. */
+  fundBalances: Record<string, number>
+  /** Closing balance minus money set aside in savings funds. */
+  spendableBalance: number
+  /** Planned contributions into savings funds this month. */
+  savingsContributions: number
+  savingsEvents: SavingsEvent[]
   cumulativeNet: number
   events: FlowEvent[]
   activeLoans: number
@@ -357,7 +375,10 @@ export interface Simulation {
   surplusMonths: number
   totalDeficit: number
   endingBalance: number
+  endingSpendable: number
   lowestBalance: number
+  /** Lowest projected spendable balance, after savings-fund contributions. */
+  lowestSpendable: number
   /** Final projected balance per account. */
   accountBalances: Record<string, number>
   payoff: { loanId: string; name: string; monthIndex: number; label: string }[]
@@ -410,6 +431,7 @@ export interface AppActions {
   upsertGoal(input: NewGoal): Promise<void>
   updateGoal(id: string, patch: Partial<NewGoal>): Promise<void>
   deleteGoal(id: string): Promise<void>
+  contributeToGoal(id: string, amount: number, fromAccount?: string): Promise<void>
   upsertActual(input: NewActual): Promise<void>
   deleteActual(id: string): Promise<void>
   /** Remove all SMS-tagged cash flows, actuals, and their dependent edits. */

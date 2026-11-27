@@ -282,6 +282,7 @@ p { margin: 0; }
 .legend-green { background: var(--teal); }
 .legend-red { background: var(--red); }
 .legend-line { width: 16px; height: 2px; background: var(--blue); border-radius: 2px; }
+.legend-line-dashed { background: repeating-linear-gradient(90deg, #ffc978 0 5px, transparent 5px 9px); }
 .chart-tooltip { background: #101d27; border: 1px solid #2a3d4b; border-radius: 12px; padding: 12px 14px; box-shadow: var(--shadow); min-width: 190px; }
 .chart-tooltip strong { display: block; font-size: 13px; margin-bottom: 8px; }
 .chart-tooltip div { display: flex; justify-content: space-between; gap: 18px; font-size: 12px; padding: 3px 0; }
@@ -310,6 +311,7 @@ p { margin: 0; }
 .preview-column { display: flex; flex-direction: column; gap: 7px; }
 .preview-column-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
 .preview-column-head strong { font-family: 'DM Sans', sans-serif; font-size: 14px; }
+.preview-subhead { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border-soft); }
 .preview-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 9px; background: rgba(255, 255, 255, 0.012); }
 .preview-date { flex: 0 0 46px; color: var(--muted-2); font-size: 10.5px; font-weight: 700; text-transform: uppercase; }
 .preview-event { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -649,7 +651,7 @@ p { margin: 0; }
 .funding-table { display: flex; flex-direction: column; overflow-x: auto; }
 .funding-table-head, .funding-table-row {
   display: grid;
-  grid-template-columns: minmax(100px, 1fr) repeat(4, minmax(105px, 0.8fr));
+  grid-template-columns: minmax(90px, 1fr) repeat(6, minmax(92px, 0.8fr));
   gap: 10px;
   align-items: center;
   padding: 9px 6px;
@@ -973,7 +975,7 @@ p { margin: 0; }
   .budget-expense-tag { display: none; }
   .funding-hero { grid-template-columns: 1fr; }
   .funding-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .funding-table-head, .funding-table-row { grid-template-columns: minmax(90px, 1fr) repeat(4, minmax(90px, 0.8fr)); min-width: 560px; gap: 6px; font-size: 11px; }
+  .funding-table-head, .funding-table-row { grid-template-columns: minmax(90px, 1fr) repeat(6, minmax(92px, 0.8fr)); min-width: 700px; gap: 6px; font-size: 11px; }
   .funding-footer .link-button { margin-left: 0; }
   .calendar-weekdays span { padding: 7px 3px; font-size: 9px; text-align: center; }
   .calendar-day { min-height: 80px; padding: 5px; gap: 3px; }
