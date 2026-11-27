@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { CSSProperties } from 'react'
 import {
   CalendarDays,
   Check,
@@ -10,6 +11,8 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react'
+import CategoryBadge from './CategoryBadge'
+import { categoryColor } from './CategoryBadge'
 import { formatMoney, formatSigned } from '../lib/format'
 import { accountLabel } from '../lib/ledger'
 import type { AppActions, AppData, FlowEvent, MonthProjection } from '../lib/types'
@@ -257,7 +260,11 @@ export default function MonthPreview({
       ? !expandedOutGroups.has(group.key)
       : collapsedInGroups.has(group.key)
     return (
-      <div className="preview-group" key={group.key}>
+      <div
+        className="preview-group"
+        key={group.key}
+        style={{ '--cat-color': categoryColor(group.label) } as CSSProperties}
+      >
         <button
           type="button"
           className="preview-group-head"
@@ -266,7 +273,8 @@ export default function MonthPreview({
           onClick={() => toggleGroup(group.key, kind)}
         >
           {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-          <span>{group.label}</span>
+          <CategoryBadge name={group.label} small />
+          <span className="group-label">{group.label}</span>
           <small>{group.events.length} {group.events.length === 1 ? 'entry' : 'entries'}</small>
           <b className={kind === 'in' ? 'positive' : 'negative'}>
             {kind === 'in' ? '+' : '−'}{formatMoney(group.total, currency)}
@@ -327,6 +335,35 @@ export default function MonthPreview({
         savings contributions move {formatMoney(month.savingsContributions, currency)} into funds, leaving
         {' '}{formatMoney(month.spendableBalance, currency)} spendable.
       </p>
+
+      {outgoingGroups.length > 0 && moneyOut > 0 && (
+        <div className="spend-mix">
+          <div className="spend-mix-head">
+            <span className="mini-subhead">Money out by category</span>
+            <small>{formatMoney(moneyOut, currency)} total</small>
+          </div>
+          <div className="spend-mix-bar">
+            {outgoingGroups.map((group) => (
+              <span
+                key={group.key}
+                style={{
+                  width: `${(group.total / moneyOut) * 100}%`,
+                  background: categoryColor(group.label),
+                }}
+                title={`${group.label}: ${formatMoney(group.total, currency)}`}
+              />
+            ))}
+          </div>
+          <div className="spend-mix-legend">
+            {outgoingGroups.map((group) => (
+              <span key={group.key}>
+                <i style={{ background: categoryColor(group.label) }} />
+                {group.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="preview-columns">
         <div className="preview-column">

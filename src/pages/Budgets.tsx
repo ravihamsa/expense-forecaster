@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Pencil, Plus, Repeat, Trash2, Wallet } from 'lucide-react'
+import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { budgetPeriodLabel, budgetTitle, buildBudgetStatuses } from '../lib/budgets'
 import type { BudgetExpense } from '../lib/budgets'
@@ -205,7 +206,10 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                       {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                     </button>
                     <div className="budget-name">
-                      <strong>{name}</strong>
+                      <strong className="budget-name-title">
+                        <CategoryBadge name={status.budget.category} small />
+                        <span>{name}</span>
+                      </strong>
                       <span>
                         {subtitle}
                         {!first?.active ? ' · not in forecast window' : ''}
@@ -286,7 +290,10 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
             {futurePlans.map(({ event, monthLabel }) => (
               <div className="ledger-row" key={event.id}>
                 <div className="ledger-main">
-                  <strong>{event.name}</strong>
+                  <strong className="ledger-main-title">
+                    <CategoryBadge name={event.category} small />
+                    <span>{event.name}</span>
+                  </strong>
                   <span>{monthLabel} · {formatDate(event.date)} · {event.category}</span>
                 </div>
                 <strong>{formatMoney(event.amount, currency)}</strong>

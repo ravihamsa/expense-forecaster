@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Pencil, Plus, Tag, Trash2 } from 'lucide-react'
+import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { categoriesOfKind } from '../lib/categories'
 import type { AppActions, AppCategory, AppData, FlowKind, NewCategory } from '../lib/types'
@@ -121,7 +122,10 @@ export default function Categories({ data, actions, onNotify }: Props) {
               return (
                 <div className="category-row" key={category.id}>
                   <div className="category-main">
-                    <strong>{category.name}</strong>
+                    <div className="category-title">
+                      <CategoryBadge name={category.name} size={20} className="category-badge-lg" />
+                      <strong>{category.name}</strong>
+                    </div>
                     <div className="category-meta">
                       <span className="category-usage">
                         {used ? `Used by ${used} item${used === 1 ? '' : 's'}` : 'Unused'}

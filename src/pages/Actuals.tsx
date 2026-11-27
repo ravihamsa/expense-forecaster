@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
-import { ArrowDownLeft, ArrowUpRight, CheckCircle2, FileSpreadsheet, Plus, Search, Trash2, Upload } from 'lucide-react'
+import { ArrowDownLeft, CheckCircle2, FileSpreadsheet, Plus, Search, Trash2, Upload } from 'lucide-react'
+import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { actualFromEvent, parseActualCsv } from '../lib/actuals'
 import { isSmsImport } from '../lib/data'
@@ -353,9 +354,9 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
                     onChange={() => toggleSelect(actual.id)}
                   />
                 ) : <span />}
-                <span className={`flow-icon ${actual.kind}`}>
-                  {actual.kind === 'income' ? <ArrowDownLeft size={17} /> : <ArrowUpRight size={17} />}
-                </span>
+                {actual.kind === 'income'
+                  ? <span className="flow-icon income"><ArrowDownLeft size={17} /></span>
+                  : <CategoryBadge name={categoryLabel(actual)} small />}
                 <div className="actual-main">
                   <strong>{actual.name}{isSmsImport(actual) && <span className="mini-tag" title="Imported from SMS">SMS</span>}</strong>
                   <span>{formatDate(actual.date)} · {categoryLabel(actual)}{actual.note ? ` · ${actual.note}` : ''}</span>
