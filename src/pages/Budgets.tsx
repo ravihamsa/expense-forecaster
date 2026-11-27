@@ -194,9 +194,10 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
               const isOpen = expanded === status.budget.id
               const period = status.budget.period ?? 'monthly'
               const displaySpent = period === 'monthly' ? (first?.spent ?? 0) : (first?.recorded ?? 0)
-              const pct = status.budget.monthly_limit > 0
-                ? Math.min(100, (displaySpent / status.budget.monthly_limit) * 100)
+              const usedPct = status.budget.monthly_limit > 0
+                ? (displaySpent / status.budget.monthly_limit) * 100
                 : 0
+              const pct = Math.min(100, usedPct)
               const name = budgetTitle(status.budget)
               const subtitle = status.budget.name?.trim()
                 ? `${budgetPeriodLabel(status.budget)} · ${status.budget.category}`
@@ -227,7 +228,9 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                       <div className="progress-track">
                         <div className={`progress-fill ${status.currentRemaining < 0 ? 'progress-over' : ''}`} style={{ width: `${pct}%` }} />
                       </div>
-                      <span>{formatMoney(displaySpent, currency)} recorded · {formatMoney(first?.available ?? status.budget.monthly_limit, currency)} available</span>
+                      <span className={usedPct > 100 ? 'negative' : ''}>
+                        {Math.round(usedPct)}% used · {formatMoney(displaySpent, currency)} of {formatMoney(first?.available ?? status.budget.monthly_limit, currency)}
+                      </span>
                     </div>
                     <strong className={status.currentRemaining < 0 ? 'negative' : 'positive'}>
                       {formatSigned(status.currentRemaining, currency)}
