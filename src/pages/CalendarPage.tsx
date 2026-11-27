@@ -12,6 +12,7 @@ import {
   Trash2,
   Undo2,
 } from 'lucide-react'
+import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { actualFromEvent } from '../lib/actuals'
 import { formatMoney, formatSigned } from '../lib/format'
@@ -498,7 +499,14 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
                     }
                     const content = (
                       <>
-                        <span className="calendar-chip-name">{event.name}</span>
+                        <span className="calendar-chip-label">
+                          <CategoryBadge
+                            name={event.category || (event.kind === 'income' ? 'Income' : 'Other')}
+                            small
+                            size={12}
+                          />
+                          <span className="calendar-chip-name">{event.name}</span>
+                        </span>
                         <b>{event.kind === 'income' ? '+' : '−'}{formatMoney(event.amount, currency)}</b>
                         {event.actualAmount !== undefined && (
                           <span className="calendar-actual-dot" title={`Actual: ${formatMoney(event.actualAmount, currency)}`}>

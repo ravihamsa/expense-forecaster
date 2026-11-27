@@ -205,7 +205,10 @@ export default function MonthPreview({
       <div className={`preview-row ${editing ? 'preview-row-editing' : ''}`} key={event.id}>
         <span className="preview-date">{shortDate(event.date)}</span>
         <div className="preview-event">
-          <strong>{event.name}</strong>
+          <span className="preview-event-title">
+            <CategoryBadge name={event.category || (event.kind === 'income' ? 'Income' : 'Other')} small size={12} />
+            <strong>{event.name}</strong>
+          </span>
           <span>{detail}</span>
         </div>
         {editing ? (
