@@ -15,7 +15,7 @@ import java.util.List;
  */
 final class CompanionDb extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "finplannar_companion";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2;
 
     private static final String TABLE_SCAN_STATE = "scan_state";
     private static final String TABLE_VENDOR_RULES = "vendor_rules";
@@ -40,6 +40,7 @@ final class CompanionDb extends SQLiteOpenHelper {
     private static final String COL_NAME = "name";
     private static final String COL_SOURCE = "source";
     private static final String COL_IGNORED = "ignored";
+    private static final String COL_REVIEWED = "reviewed";
     private static final String COL_SYNCED = "synced";
     private static final String COL_REMOTE_FLOW_ID = "remote_flow_id";
 
@@ -77,17 +78,18 @@ final class CompanionDb extends SQLiteOpenHelper {
                 + COL_KIND + " TEXT, "
                 + COL_SOURCE + " TEXT, "
                 + COL_IGNORED + " INTEGER DEFAULT 0, "
+                + COL_REVIEWED + " INTEGER DEFAULT 0, "
                 + COL_SYNCED + " INTEGER DEFAULT 0, "
                 + COL_REMOTE_FLOW_ID + " TEXT)");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // Version 1: nothing to migrate yet. Rebuild if the schema changes later.
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_SMS_EVENTS);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_VENDOR_RULES);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_SCAN_STATE);
-        onCreate(db);
+        // Keep learned vendor rules and the scan cursor when adding the review flag.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE " + TABLE_SMS_EVENTS + " ADD COLUMN "
+                    + COL_REVIEWED + " INTEGER DEFAULT 0");
+        }
     }
 
     // ---------------------------------------------------------------- scan state
@@ -158,6 +160,7 @@ final class CompanionDb extends SQLiteOpenHelper {
         values.put(COL_KIND, candidate.kind);
         values.put(COL_SOURCE, candidate.source);
         values.put(COL_IGNORED, candidate.ignored ? 1 : 0);
+        values.put(COL_REVIEWED, 0);
         values.put(COL_SYNCED, candidate.synced ? 1 : 0);
         if (candidate.remoteFlowId == null) {
             values.putNull(COL_REMOTE_FLOW_ID);
@@ -179,6 +182,7 @@ final class CompanionDb extends SQLiteOpenHelper {
         values.put(COL_ACCOUNT, "cash".equals(account) ? "cash" : "bank");
         values.put(COL_KIND, "income".equals(kind) ? "income" : "expense");
         values.put(COL_IGNORED, 0);
+        values.put(COL_REVIEWED, 1);
         getWritableDatabase().update(TABLE_SMS_EVENTS, values,
                 COL_FINGERPRINT + " = ?", new String[]{fingerprint});
     }
@@ -186,6 +190,7 @@ final class CompanionDb extends SQLiteOpenHelper {
     void markIgnored(String fingerprint) {
         ContentValues values = new ContentValues();
         values.put(COL_IGNORED, 1);
+        values.put(COL_REVIEWED, 1);
         getWritableDatabase().update(TABLE_SMS_EVENTS, values,
                 COL_FINGERPRINT + " = ?", new String[]{fingerprint});
     }
@@ -204,12 +209,32 @@ final class CompanionDb extends SQLiteOpenHelper {
                 COL_FINGERPRINT + " = ?", new String[]{fingerprint});
     }
 
-    /** Unsynced candidates from {@code sinceMillis} onward, oldest first. */
+    /** Rows still waiting for an Expense / Income / Ignore choice. */
     List<Candidate> pendingCandidates(long sinceMillis, int limit) {
+        return candidatesWhere(COL_SYNCED + " = 0 AND " + COL_REVIEWED + " = 0 AND "
+                + COL_SMS_DATE + " >= ?", sinceMillis, limit);
+    }
+
+    /** Chosen rows waiting for Save selected. Ignored rows are included. */
+    List<Candidate> reviewedCandidates(long sinceMillis) {
+        return candidatesWhere(COL_SYNCED + " = 0 AND " + COL_REVIEWED + " = 1 AND "
+                + COL_SMS_DATE + " >= ?", sinceMillis, 0);
+    }
+
+    int countPending(long sinceMillis) {
+        return countWhere(COL_SYNCED + " = 0 AND " + COL_REVIEWED + " = 0 AND "
+                + COL_SMS_DATE + " >= ?", new String[]{String.valueOf(sinceMillis)});
+    }
+
+    int countReadyToSave(long sinceMillis) {
+        return countWhere(COL_SYNCED + " = 0 AND " + COL_REVIEWED + " = 1 AND "
+                + COL_SMS_DATE + " >= ?", new String[]{String.valueOf(sinceMillis)});
+    }
+
+    private List<Candidate> candidatesWhere(String where, long sinceMillis, int limit) {
         SQLiteDatabase db = getReadableDatabase();
         String limitValue = limit > 0 ? String.valueOf(limit) : null;
-        Cursor cursor = db.query(TABLE_SMS_EVENTS, null,
-                COL_SYNCED + " = 0 AND " + COL_SMS_DATE + " >= ?",
+        Cursor cursor = db.query(TABLE_SMS_EVENTS, null, where,
                 new String[]{String.valueOf(sinceMillis)}, null, null,
                 COL_SMS_DATE + " ASC", limitValue);
         List<Candidate> result = new ArrayList<>();
@@ -223,18 +248,6 @@ final class CompanionDb extends SQLiteOpenHelper {
         return result;
     }
 
-    int countPending(long sinceMillis) {
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor cursor = db.query(TABLE_SMS_EVENTS, new String[]{COL_FINGERPRINT},
-                COL_SYNCED + " = 0 AND " + COL_SMS_DATE + " >= ?",
-                new String[]{String.valueOf(sinceMillis)}, null, null, null);
-        try {
-            return cursor.getCount();
-        } finally {
-            cursor.close();
-        }
-    }
-
     int countSynced() {
         return countWhere(COL_SYNCED + " = 1");
     }
@@ -244,9 +257,13 @@ final class CompanionDb extends SQLiteOpenHelper {
     }
 
     private int countWhere(String where) {
+        return countWhere(where, null);
+    }
+
+    private int countWhere(String where, String[] args) {
         SQLiteDatabase db = getReadableDatabase();
         Cursor cursor = db.query(TABLE_SMS_EVENTS, new String[]{COL_FINGERPRINT}, where,
-                null, null, null, null);
+                args, null, null, null);
         try {
             return cursor.getCount();
         } finally {

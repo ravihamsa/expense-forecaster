@@ -187,14 +187,15 @@ public final class MainActivity extends Activity {
         List<Candidate> pending = db.pendingCandidates(monthStart, VISIBLE_CANDIDATE_LIMIT);
         int pendingCount = db.countPending(monthStart);
         if (pending.isEmpty()) {
-            candidates.addView(note("No current-month pending candidates. Tap Scan SMS to review new messages."));
+            candidates.addView(note("No current-month messages need review. Tap Scan SMS to find more."));
         } else {
             for (Candidate candidate : pending) {
                 addCandidateCard(candidates, candidate);
             }
             if (pendingCount > pending.size()) {
                 candidates.addView(note("Showing " + pending.size() + " of " + pendingCount
-                        + " current-month pending messages. Save or ignore these to see more."));
+                        + " current-month messages awaiting review. Choose Expense, Income or Ignore "
+                        + "to move them to Save selected."));
             }
         }
         content.addView(candidates);
@@ -202,7 +203,8 @@ public final class MainActivity extends Activity {
 
     private void updateSummary(long monthStart) {
         if (summaryView != null) {
-            summaryView.setText("Pending this month: " + db.countPending(monthStart)
+            summaryView.setText("To review: " + db.countPending(monthStart)
+                    + "  •  Ready to save: " + db.countReadyToSave(monthStart)
                     + "  •  Synced: " + db.countSynced()
                     + "  •  Ignored: " + db.countIgnored());
         }
@@ -288,6 +290,9 @@ public final class MainActivity extends Activity {
         if (ignored) {
             db.markIgnored(candidate.fingerprint);
         }
+        String action = ignored ? "Ignored"
+                : "income".equals(kind) ? "Marked as income" : "Marked as expense";
+        toast(action + ". Tap Save selected to sync.");
         renderScreen();
     }
 
@@ -399,7 +404,7 @@ public final class MainActivity extends Activity {
                 int ignored = 0;
                 int failed = 0;
                 String firstError = null;
-                for (Candidate candidate : db.pendingCandidates(monthStart, Integer.MAX_VALUE)) {
+                for (Candidate candidate : db.reviewedCandidates(monthStart)) {
                     try {
                         String date = dateOf(candidate.smsDate);
                         if (candidate.ignored) {

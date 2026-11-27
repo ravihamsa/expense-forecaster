@@ -19,7 +19,8 @@ transactions into the same Supabase account.
   cash/bank account are inferred locally with regex rules. No SMS text is sent to an
   AI service or third party.
 - **Editable review.** Candidates appear with editable amount, name and category, an account
-  spinner, and **Expense / Income / Ignore** buttons. Nothing is uploaded until you tap
+  spinner, and **Expense / Income / Ignore** buttons. A choice removes the card from the
+  review queue and moves it to **Ready to save**; nothing is uploaded until you tap
   **Save selected**.
 - **Existing tables.** Confirmed rows go to `cash_flows` (as `one_time`) and `actuals`
   (with the same `flowId-epochMillis` event key the web app uses). Learned vendor
