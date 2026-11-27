@@ -54,6 +54,8 @@ export interface CashFlow {
   interval_count: number
   start_date: string
   end_date: string | null
+  /** Set to 'sms' for one-time rows imported from the Android companion. */
+  source?: string
   note: string
   created_at?: string
 }
@@ -124,6 +126,20 @@ export interface Goal {
   created_at?: string
 }
 
+/** A learned SMS companion classification for a vendor/sender pair. */
+export interface VendorRule {
+  id: string
+  user_id: string
+  vendor_key: string
+  vendor_name: string
+  kind: FlowKind
+  category: string
+  account: MoneyAccount
+  auto_apply: boolean
+  created_at?: string
+  updated_at?: string
+}
+
 /** A recorded amount for one planned cash-flow occurrence. */
 export interface Actual {
   id: string
@@ -136,6 +152,8 @@ export interface Actual {
   category: string
   kind: FlowKind
   amount: number
+  /** Set to 'sms' for actuals imported from the Android companion. */
+  source?: string
   note: string
   created_at?: string
 }
@@ -200,6 +218,7 @@ export interface AppData {
   cashFlowSkips: CashFlowSkip[]
   budgets: Budget[]
   goals: Goal[]
+  vendorRules: VendorRule[]
   actuals: Actual[]
   loans: Loan[]
   loanPayments: LoanPayment[]
@@ -327,6 +346,8 @@ export interface AppActions {
   deleteGoal(id: string): Promise<void>
   upsertActual(input: NewActual): Promise<void>
   deleteActual(id: string): Promise<void>
+  /** Remove all SMS-tagged cash flows, actuals, and their dependent edits. */
+  deleteSmsImports(): Promise<void>
   addLoan(input: NewLoan): Promise<void>
   updateLoan(id: string, patch: Partial<NewLoan>): Promise<void>
   deleteLoan(id: string): Promise<void>

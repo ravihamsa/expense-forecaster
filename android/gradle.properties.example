@@ -1,0 +1,5 @@
+# Copy this file to android/gradle.properties and fill in your Supabase project values.
+# Project Settings -> API -> Project URL and anon public key.
+# These become BuildConfig.SUPABASE_URL and BuildConfig.SUPABASE_ANON_KEY at build time.
+supabaseUrl=
+supabaseAnonKey=

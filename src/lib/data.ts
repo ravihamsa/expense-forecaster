@@ -14,6 +14,7 @@ import type {
   LoanPayment,
   MonthlyIncome,
   Profile,
+  VendorRule,
 } from './types'
 
 export type CashFlowInput = Omit<CashFlow, 'id' | 'user_id' | 'created_at'>
@@ -35,6 +36,10 @@ export interface AuthUser {
 }
 
 export const usingSupabase = isSupabaseConfigured && supabase !== null
+
+export function isSmsImport(row: { source?: string }): boolean {
+  return row.source === 'sms'
+}
 
 // ---------------------------------------------------------------------------
 // Local demo mode (used only when Supabase env vars are not configured)
@@ -109,6 +114,7 @@ function defaultData(userId: string, displayName: string): AppData {
     cashFlowSkips: [],
     budgets: [],
     goals: [],
+    vendorRules: [],
     actuals: [],
     loans: [],
     loanPayments: [],
@@ -301,6 +307,13 @@ function normalizeData(data: AppData): AppData {
       target_date: goal.target_date ?? null,
       note: goal.note ?? '',
     })),
+    vendorRules: (data.vendorRules ?? []).map((rule) => ({
+      ...rule,
+      vendor_name: rule.vendor_name ?? '',
+      category: rule.category || 'Other',
+      account: rule.account === 'cash' ? 'cash' : 'bank',
+      auto_apply: rule.auto_apply ?? false,
+    })),
     actuals: (data.actuals ?? []).map((actual) => ({
       ...actual,
       amount: Number(actual.amount) || 0,
@@ -337,6 +350,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       skipsResult,
       budgetsResult,
       goalsResult,
+      vendorRulesResult,
       actualsResult,
       loansResult,
       paymentsResult,
@@ -349,6 +363,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       supabase.from('cash_flow_skips').select('*').eq('user_id', user.id).order('date', { ascending: true }),
       supabase.from('budgets').select('*').eq('user_id', user.id).order('category', { ascending: true }),
       supabase.from('goals').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+      supabase.from('vendor_rules').select('*').eq('user_id', user.id).order('vendor_name', { ascending: true }),
       supabase.from('actuals').select('*').eq('user_id', user.id).order('date', { ascending: false }),
       supabase.from('loans').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
       supabase.from('loan_payments').select('*').eq('user_id', user.id).order('payment_date', { ascending: false }),
@@ -361,6 +376,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
     if (skipsResult.error) throw skipsResult.error
     if (budgetsResult.error) throw budgetsResult.error
     if (goalsResult.error) throw goalsResult.error
+    if (vendorRulesResult.error) throw vendorRulesResult.error
     if (actualsResult.error) throw actualsResult.error
     if (loansResult.error) throw loansResult.error
     if (paymentsResult.error) throw paymentsResult.error
@@ -394,6 +410,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       goals: (goalsResult.data ?? []).map(
         (row) => ensureNumbers(row as unknown as Record<string, unknown>) as unknown as Goal,
       ),
+      vendorRules: (vendorRulesResult.data ?? []) as unknown as VendorRule[],
       actuals: (actualsResult.data ?? []).map(
         (row) => ensureNumbers(row as unknown as Record<string, unknown>) as unknown as Actual,
       ),
@@ -757,6 +774,57 @@ export async function deleteActual(user: AuthUser, id: string): Promise<void> {
   }))
 }
 
+export async function deleteSmsImports(user: AuthUser): Promise<void> {
+  if (usingSupabase && supabase) {
+    const { data: flows, error: lookupError } = await supabase
+      .from('cash_flows')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('source', 'sms')
+    if (lookupError) throw lookupError
+
+    const { error: actualError } = await supabase
+      .from('actuals')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('source', 'sms')
+    if (actualError) throw actualError
+
+    const ids = (flows ?? []).map((flow) => flow.id as string)
+    if (ids.length > 0) {
+      const results = await Promise.all([
+        supabase.from('cash_flow_overrides').delete().eq('user_id', user.id).in('cash_flow_id', ids),
+        supabase.from('cash_flow_moves').delete().eq('user_id', user.id).in('cash_flow_id', ids),
+        supabase.from('cash_flow_skips').delete().eq('user_id', user.id).in('cash_flow_id', ids),
+      ])
+      const dependentError = results.find((result) => result.error)?.error
+      if (dependentError) throw dependentError
+
+      const { error: flowError } = await supabase
+        .from('cash_flows')
+        .delete()
+        .eq('user_id', user.id)
+        .in('id', ids)
+      if (flowError) throw flowError
+    }
+    return
+  }
+
+  await updateLocal(user, (data) => {
+    const ids = new Set(data.cashFlows.filter(isSmsImport).map((flow) => flow.id))
+    return {
+      ...data,
+      cashFlows: data.cashFlows.filter((flow) => !ids.has(flow.id)),
+      cashFlowOverrides: data.cashFlowOverrides.filter((row) => !ids.has(row.cash_flow_id)),
+      cashFlowMoves: data.cashFlowMoves.filter((row) => !ids.has(row.cash_flow_id)),
+      cashFlowSkips: data.cashFlowSkips.filter((row) => !ids.has(row.cash_flow_id)),
+      actuals: data.actuals.filter(
+        (actual) => !isSmsImport(actual) && !(actual.cash_flow_id && ids.has(actual.cash_flow_id)),
+      ),
+    }
+  })
+}
+
 export async function addLoan(user: AuthUser, input: LoanInput): Promise<Loan> {
   const row: Loan = { ...input, id: makeId(), user_id: user.id }
   if (usingSupabase && supabase) {
@@ -1010,6 +1078,9 @@ function remapData(data: AppData, userId: string): AppData {
   const goals = data.goals.map((row) => ({
     ...row, id: freshId(row.id), user_id: userId,
   }))
+  const vendorRules = data.vendorRules.map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId,
+  }))
   const loans = data.loans.map((row) => ({
     ...row, id: freshId(row.id), user_id: userId,
   }))
@@ -1041,6 +1112,7 @@ function remapData(data: AppData, userId: string): AppData {
     cashFlowSkips,
     budgets,
     goals,
+    vendorRules,
     actuals,
     loans,
     loanPayments,
@@ -1072,6 +1144,7 @@ function mergeData(current: AppData, incoming: AppData): AppData {
     ),
     budgets: by([...current.budgets, ...incoming.budgets], (row) => row.category),
     goals: by([...current.goals, ...incoming.goals], (row) => row.id),
+    vendorRules: by([...current.vendorRules, ...incoming.vendorRules], (row) => row.vendor_key),
     actuals: by([...current.actuals, ...incoming.actuals], (row) => row.event_key),
     loans: by([...current.loans, ...incoming.loans], (row) => row.id),
     loanPayments: by([...current.loanPayments, ...incoming.loanPayments], (row) => row.id),
@@ -1104,6 +1177,7 @@ export async function importDataExport(
       'cash_flows',
       'budgets',
       'goals',
+      'vendor_rules',
       'monthly_incomes',
     ]
     for (const table of children) {
@@ -1133,6 +1207,7 @@ export async function importDataExport(
   await writeRows('cash_flow_skips', imported.cashFlowSkips, 'user_id,cash_flow_id,date')
   await writeRows('budgets', imported.budgets, 'user_id,category')
   await writeRows('goals', imported.goals)
+  await writeRows('vendor_rules', imported.vendorRules, 'user_id,vendor_key')
   await writeRows('loans', imported.loans)
   await writeRows('loan_payments', imported.loanPayments)
   await writeRows('actuals', imported.actuals, 'user_id,event_key')
