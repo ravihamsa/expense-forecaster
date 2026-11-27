@@ -16,6 +16,7 @@ interface Props {
 }
 
 type Filter = 'all' | 'income' | 'expense' | 'sms'
+type Sort = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'name-asc'
 
 export default function Actuals({ data, actions, simulation, currency, onNotify }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
@@ -25,6 +26,10 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  const [sortBy, setSortBy] = useState<Sort>('date-desc')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkCategory, setBulkCategory] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const events = useMemo(() => simulation.months.flatMap((month) => month.events), [simulation.months])
@@ -37,10 +42,53 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
     [events, recordedKeys, today],
   )
 
-  const rows = useMemo(() => data.actuals
-    .filter((actual) => filter === 'all' || (filter === 'sms' ? isSmsImport(actual) : actual.kind === filter))
-    .filter((actual) => `${actual.name} ${actual.category} ${actual.note}`.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => b.date.localeCompare(a.date)), [data.actuals, filter, search])
+  const categoryLabel = (actual: { category?: string; kind: string }): string => (
+    actual.category || (actual.kind === 'income' ? 'Income' : 'Other')
+  )
+
+  const categoryOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const category of data.categories ?? []) names.add(category.name)
+    for (const actual of data.actuals ?? []) names.add(categoryLabel(actual))
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [data.categories, data.actuals])
+
+  const expenseCategoryOptions = useMemo(() => {
+    const names = new Set<string>(['Other'])
+    for (const category of data.categories ?? []) {
+      if (category.kind === 'expense') names.add(category.name)
+    }
+    for (const budget of data.budgets ?? []) names.add(budget.category)
+    for (const actual of data.actuals ?? []) {
+      if (actual.kind === 'expense' && actual.category) names.add(actual.category)
+    }
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [data.categories, data.budgets, data.actuals])
+
+  const rows = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    const list = data.actuals
+      .filter((actual) => filter === 'all' || (filter === 'sms' ? isSmsImport(actual) : actual.kind === filter))
+      .filter((actual) => categoryFilter === 'all' || categoryLabel(actual) === categoryFilter)
+      .filter((actual) => `${actual.name} ${actual.category} ${actual.note}`.toLowerCase().includes(query))
+    return list.sort((a, b) => {
+      const dateDesc = b.date.localeCompare(a.date) || b.name.localeCompare(a.name)
+      switch (sortBy) {
+        case 'date-asc': return a.date.localeCompare(b.date) || a.name.localeCompare(b.name)
+        case 'amount-desc': return b.amount - a.amount || dateDesc
+        case 'amount-asc': return a.amount - b.amount || dateDesc
+        case 'name-asc': return a.name.localeCompare(b.name) || dateDesc
+        default: return dateDesc
+      }
+    })
+  }, [data.actuals, filter, categoryFilter, search, sortBy])
+
+  const expenseRows = rows.filter((actual) => actual.kind === 'expense')
+  const selectedExpenses = data.actuals.filter(
+    (actual) => selectedIds.has(actual.id) && actual.kind === 'expense',
+  )
+  const allExpensesSelected = expenseRows.length > 0
+    && expenseRows.every((actual) => selectedIds.has(actual.id))
 
   const smsCount = data.actuals.filter(isSmsImport).length
   const incomeTotal = data.actuals.filter((actual) => actual.kind === 'income').reduce((sum, actual) => sum + actual.amount, 0)
@@ -88,6 +136,58 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
       onNotify('Actual removed.')
     } catch (caught) {
       onNotify(caught instanceof Error ? caught.message : 'Could not remove this actual.')
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAllExpenses() {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      for (const actual of expenseRows) {
+        if (allExpensesSelected) next.delete(actual.id)
+        else next.add(actual.id)
+      }
+      return next
+    })
+  }
+
+  async function applyBulkCategory() {
+    if (!bulkCategory || !selectedExpenses.length || busy) return
+    try {
+      setBusy(true)
+      for (const actual of selectedExpenses) {
+        await actions.upsertActual({ ...actual, category: bulkCategory })
+      }
+      onNotify(`Category updated for ${selectedExpenses.length} recorded expense${selectedExpenses.length === 1 ? '' : 's'}.`)
+      setSelectedIds(new Set())
+      setBulkCategory('')
+    } catch (caught) {
+      onNotify(caught instanceof Error ? caught.message : 'Could not update these expenses.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function bulkDelete() {
+    if (!selectedExpenses.length || busy) return
+    if (!window.confirm(`Delete ${selectedExpenses.length} selected recorded expense${selectedExpenses.length === 1 ? '' : 's'}?`)) return
+    try {
+      setBusy(true)
+      for (const actual of selectedExpenses) await actions.deleteActual(actual.id)
+      onNotify(`${selectedExpenses.length} recorded expense${selectedExpenses.length === 1 ? '' : 's'} deleted.`)
+      setSelectedIds(new Set())
+    } catch (caught) {
+      onNotify(caught instanceof Error ? caught.message : 'Could not delete these expenses.')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -163,12 +263,52 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
         <div className="toolbar">
           <div className="filter-tabs">
             {(['all', 'income', 'expense', 'sms'] as Filter[]).map((option) => (
-              <button key={option} className={filter === option ? 'filter-active' : ''} onClick={() => setFilter(option)}>
+              <button
+                key={option}
+                className={filter === option ? 'filter-active' : ''}
+                onClick={() => { setFilter(option); setSelectedIds(new Set()) }}
+              >
                 {option === 'all' ? 'All' : option === 'income' ? 'Income' : option === 'expense' ? 'Expenses' : `SMS (${smsCount})`}
               </button>
             ))}
           </div>
-          <div className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search actuals…" /></div>
+          <label className="toolbar-select" title="Select all visible expenses">
+            <input
+              type="checkbox"
+              checked={allExpensesSelected}
+              disabled={!expenseRows.length}
+              onChange={toggleAllExpenses}
+            />
+            <span>Select all</span>
+          </label>
+          <label className="toolbar-select">
+            <span>Category</span>
+            <select
+              value={categoryFilter}
+              onChange={(event) => { setCategoryFilter(event.target.value); setSelectedIds(new Set()) }}
+            >
+              <option value="all">All</option>
+              {categoryOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <label className="toolbar-select">
+            <span>Sort</span>
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as Sort)}>
+              <option value="date-desc">Newest first</option>
+              <option value="date-asc">Oldest first</option>
+              <option value="amount-desc">Amount: high to low</option>
+              <option value="amount-asc">Amount: low to high</option>
+              <option value="name-asc">Name A–Z</option>
+            </select>
+          </label>
+          <div className="search-box">
+            <Search size={16} />
+            <input
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setSelectedIds(new Set()) }}
+              placeholder="Search actuals…"
+            />
+          </div>
           {smsCount > 0 && (
             <button className="btn btn-danger btn-small" onClick={() => void handleRemoveSms()}>
               <Trash2 size={14} /> Remove SMS imports
@@ -176,16 +316,49 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
           )}
         </div>
 
+        {selectedExpenses.length > 0 && (
+          <div className="bulk-bar">
+            <span>{selectedExpenses.length} expense{selectedExpenses.length === 1 ? '' : 's'} selected</span>
+            <select
+              aria-label="New category for selected expenses"
+              value={bulkCategory}
+              onChange={(event) => setBulkCategory(event.target.value)}
+            >
+              <option value="">Change category…</option>
+              {expenseCategoryOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <button
+              className="btn btn-outline btn-small"
+              disabled={!bulkCategory || busy}
+              onClick={() => void applyBulkCategory()}
+            >
+              Apply category
+            </button>
+            <button className="btn btn-danger btn-small" disabled={busy} onClick={() => void bulkDelete()}>
+              <Trash2 size={14} /> Delete selected
+            </button>
+            <button className="btn btn-ghost btn-small" onClick={() => setSelectedIds(new Set())}>Clear</button>
+          </div>
+        )}
+
         {rows.length ? (
           <div className="actual-list">
             {rows.map((actual) => (
-              <div className="actual-row" key={actual.id}>
+              <div className={`actual-row ${selectedIds.has(actual.id) ? 'actual-row-selected' : ''}`} key={actual.id}>
+                {actual.kind === 'expense' ? (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${actual.name}`}
+                    checked={selectedIds.has(actual.id)}
+                    onChange={() => toggleSelect(actual.id)}
+                  />
+                ) : <span />}
                 <span className={`flow-icon ${actual.kind}`}>
                   {actual.kind === 'income' ? <ArrowDownLeft size={17} /> : <ArrowUpRight size={17} />}
                 </span>
                 <div className="actual-main">
                   <strong>{actual.name}{isSmsImport(actual) && <span className="mini-tag" title="Imported from SMS">SMS</span>}</strong>
-                  <span>{formatDate(actual.date)} · {actual.category || (actual.kind === 'income' ? 'Income' : 'Other')}{actual.note ? ` · ${actual.note}` : ''}</span>
+                  <span>{formatDate(actual.date)} · {categoryLabel(actual)}{actual.note ? ` · ${actual.note}` : ''}</span>
                 </div>
                 <strong className={actual.kind === 'income' ? 'positive' : ''}>
                   {actual.kind === 'income' ? '+' : '−'}{formatMoney(actual.amount, currency)}
