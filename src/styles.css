@@ -558,6 +558,40 @@ p { margin: 0; }
 .ledger-row > b { font-family: 'DM Sans', sans-serif; font-size: 12.5px; text-align: right; white-space: nowrap; }
 .ledger-balance { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
 
+/* Upcoming planned spends — compact cards, not a five-column money-trail table. */
+.upcoming-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.upcoming-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.upcoming-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: var(--surface-3);
+}
+.upcoming-date span { color: var(--muted); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+.upcoming-date strong { font-family: 'DM Sans', sans-serif; font-size: 17px; line-height: 1.15; }
+.upcoming-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.upcoming-title { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; }
+.upcoming-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upcoming-main > span { color: var(--muted); font-size: 11px; }
+.upcoming-amounts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; white-space: nowrap; }
+.upcoming-amounts > strong { font-family: 'DM Sans', sans-serif; font-size: 13px; }
+.upcoming-amounts > span { color: var(--muted); font-size: 10.5px; }
+.upcoming-actions { display: flex; align-items: center; }
+.upcoming-actions .icon-button { width: 26px; height: 26px; }
+
 /* ------------------------------ Calendar ------------------------------ */
 
 .calendar-card { overflow: hidden; }
@@ -1031,6 +1065,9 @@ p { margin: 0; }
   .budget-months { padding-left: 4px; }
   .budget-expense-row { grid-template-columns: minmax(0, 1fr) auto; }
   .budget-expense-tag { display: none; }
+  .upcoming-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .upcoming-amounts { grid-column: 2 / -1; grid-row: 2; align-items: flex-start; }
+  .upcoming-actions { grid-column: 3; grid-row: 1; }
   .funding-hero { grid-template-columns: 1fr; }
   .funding-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .funding-table-head, .funding-table-row { grid-template-columns: minmax(90px, 1fr) repeat(6, minmax(92px, 0.8fr)); min-width: 700px; gap: 6px; font-size: 11px; }

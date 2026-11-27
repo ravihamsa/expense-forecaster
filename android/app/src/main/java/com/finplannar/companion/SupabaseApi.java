@@ -261,7 +261,7 @@ final class SupabaseApi {
 
     void insertActual(String flowId, Candidate candidate, String userId, String dateYyyyMmDd)
             throws IOException, JSONException {
-        // Matches the id used by the web app's forecast for a one-time flow.
+        // SMS spends are recorded only; the web migration links them to a budget when appropriate.
         String eventKey = flowId + "-"
                 + LocalDate.parse(dateYyyyMmDd)
                 .atStartOfDay(ZoneId.systemDefault())

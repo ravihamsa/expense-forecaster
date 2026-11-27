@@ -11,6 +11,7 @@ import { occurrencesInMonth } from './schedule'
 import type {
   Actual,
   AppData,
+  BudgetMove,
   CashFlowMove,
   CashFlowSkip,
   FlowEvent,
@@ -153,6 +154,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     cashFlowOverrides = [],
     cashFlowMoves = [],
     cashFlowSkips = [],
+    budgetMoves = [],
     actuals = [],
     budgets = [],
     goals = [],
@@ -182,6 +184,10 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
   const skips = new Set(
     (cashFlowSkips ?? []).map((skip: CashFlowSkip) => `${skip.cash_flow_id}|${skip.date}`),
   )
+  const budgetMovesByKey = new Map<string, BudgetMove>()
+  ;(budgetMoves ?? []).forEach((move) => {
+    budgetMovesByKey.set(`${move.budget_id}|${move.from_date}`, move)
+  })
   const actualsByKey = new Map<string, Actual>()
   ;(actuals ?? []).forEach((actual) => {
     actualsByKey.set(actual.event_key, actual)
@@ -425,7 +431,15 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
       }
       if (eventAmount <= 0.005 && !hasActual) continue
 
-      buckets[i].events.push({
+      // A calendar move changes where the occurrence appears, not its identity:
+      // recorded amounts stay attached to the original budget event id.
+      const moved = budgetMovesByKey.get(`${budget.id}|${occurrence}`)
+      const eventDate = moved?.to_date ?? occurrence
+      const targetIndex = moved ? monthOffset(eventDate, from) : i
+      if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= horizon) continue
+      const targetBucket = buckets[targetIndex]
+
+      targetBucket.events.push({
         id: eventId,
         name: budget.name?.trim() || budget.category,
         kind: 'expense',
@@ -434,14 +448,17 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
         account: 'bank',
         source: 'budget',
         budgetId: budget.id,
-        date: occurrence,
-        sourceMonth: currentKey,
+        date: eventDate,
+        sourceMonth: eventDate.slice(0, 7),
+        moveId: moved?.id,
+        originalDate: occurrence,
         actualAmount: hasActual ? recorded : undefined,
         actualId: eventActuals[0]?.id,
-        canMove: false,
+        canMove: true,
+        moved: Boolean(moved),
       })
-      buckets[i].expenses += eventAmount
-      addDelta(buckets[i].deltas, 'bank', -eventAmount)
+      targetBucket.expenses += eventAmount
+      addDelta(targetBucket.deltas, 'bank', -eventAmount)
     }
   }
 
@@ -464,7 +481,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
         date: actual.date,
         actualAmount: amount,
         actualId: actual.id,
-        canMove: false,
+        canMove: true,
       })
       buckets[i].expenses += amount
       addDelta(buckets[i].deltas, actual.account, -amount)

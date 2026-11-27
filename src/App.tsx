@@ -127,6 +127,8 @@ export default function App() {
       deleteCashFlowOverride: (id) => run(() => api.deleteCashFlowOverride(user!, id), 'Fixed amount removed.'),
       upsertCashFlowMove: (input) => run(() => api.upsertCashFlowMove(user!, input).then(() => undefined), 'Entry moved.'),
       deleteCashFlowMove: (id) => run(() => api.deleteCashFlowMove(user!, id), 'Original date restored.'),
+      upsertBudgetMove: (input) => run(() => api.upsertBudgetMove(user!, input).then(() => undefined), 'Planned spend moved.'),
+      deleteBudgetMove: (id) => run(() => api.deleteBudgetMove(user!, id), 'Original date restored.'),
       upsertCashFlowSkip: (input) => run(() => api.upsertCashFlowSkip(user!, input).then(() => undefined), 'Entry skipped for this date.'),
       deleteCashFlowSkip: (id) => run(() => api.deleteCashFlowSkip(user!, id), 'Entry restored.'),
       upsertBudget: (input) => run(() => api.upsertBudget(user!, input).then(() => undefined), 'Plan saved.'),

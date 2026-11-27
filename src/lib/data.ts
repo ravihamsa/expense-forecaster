@@ -10,6 +10,7 @@ import type {
   AppCategory,
   AppData,
   Budget,
+  BudgetMove,
   CashFlow,
   CashFlowMove,
   CashFlowOverride,
@@ -31,6 +32,7 @@ export type CashFlowInput = Omit<CashFlow, 'id' | 'user_id' | 'created_at'>
 export type CashFlowOverrideInput = Omit<CashFlowOverride, 'id' | 'user_id' | 'created_at'>
 export type CashFlowMoveInput = Omit<CashFlowMove, 'id' | 'user_id' | 'created_at'>
 export type CashFlowSkipInput = Omit<CashFlowSkip, 'id' | 'user_id' | 'created_at'>
+export type BudgetMoveInput = Omit<BudgetMove, 'id' | 'user_id' | 'created_at'>
 export type BudgetInput = Omit<Budget, 'id' | 'user_id' | 'created_at'>
 export type GoalInput = Omit<Goal, 'id' | 'user_id' | 'created_at'>
 export type ActualInput = Omit<Actual, 'id' | 'user_id' | 'created_at'>
@@ -143,6 +145,7 @@ function defaultData(userId: string, displayName: string): AppData {
     cashFlowOverrides: [],
     cashFlowMoves: [],
     cashFlowSkips: [],
+    budgetMoves: [],
     budgets: [],
     goals: [],
     vendorRules: [],
@@ -409,6 +412,7 @@ function normalizeData(data: AppData): AppData {
     })),
     cashFlowMoves: raw.cashFlowMoves ?? [],
     cashFlowSkips: raw.cashFlowSkips ?? [],
+    budgetMoves: raw.budgetMoves ?? [],
     budgets: (raw.budgets ?? []).map((budget) => ({
       ...budget,
       monthly_limit: Number(budget.monthly_limit) || 0,
@@ -517,6 +521,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       overridesResult,
       movesResult,
       skipsResult,
+      budgetMovesResult,
       budgetsResult,
       goalsResult,
       vendorRulesResult,
@@ -533,6 +538,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       supabase.from('cash_flow_overrides').select('*').eq('user_id', user.id).order('month', { ascending: true }),
       supabase.from('cash_flow_moves').select('*').eq('user_id', user.id).order('from_date', { ascending: true }),
       supabase.from('cash_flow_skips').select('*').eq('user_id', user.id).order('date', { ascending: true }),
+      supabase.from('budget_moves').select('*').eq('user_id', user.id).order('from_date', { ascending: true }),
       supabase.from('budgets').select('*').eq('user_id', user.id).order('category', { ascending: true }),
       supabase.from('goals').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
       supabase.from('vendor_rules').select('*').eq('user_id', user.id).order('vendor_name', { ascending: true }),
@@ -549,6 +555,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
     if (overridesResult.error) throw overridesResult.error
     if (movesResult.error) throw movesResult.error
     if (skipsResult.error) throw skipsResult.error
+    if (budgetMovesResult.error && !isMissingTable(budgetMovesResult.error.code)) throw budgetMovesResult.error
     if (budgetsResult.error) throw budgetsResult.error
     if (goalsResult.error) throw goalsResult.error
     if (vendorRulesResult.error) throw vendorRulesResult.error
@@ -584,6 +591,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       ),
       cashFlowMoves: (movesResult.data ?? []) as unknown as CashFlowMove[],
       cashFlowSkips: (skipsResult.data ?? []) as unknown as CashFlowSkip[],
+      budgetMoves: (budgetMovesResult.data ?? []) as unknown as BudgetMove[],
       budgets: (budgetsResult.data ?? []).map(
         (row) => ensureNumbers(row as unknown as Record<string, unknown>) as unknown as Budget,
       ),
@@ -1104,6 +1112,44 @@ export async function deleteCashFlowMove(user: AuthUser, id: string): Promise<vo
   }))
 }
 
+export async function upsertBudgetMove(user: AuthUser, input: BudgetMoveInput): Promise<BudgetMove> {
+  const row: BudgetMove = { ...input, id: makeId(), user_id: user.id }
+  if (usingSupabase && supabase) {
+    const { id: _id, created_at: _created, ...insertRow } = row
+    void _id
+    void _created
+    const { data, error } = await supabase
+      .from('budget_moves')
+      .upsert(insertRow, { onConflict: 'user_id,budget_id,from_date' })
+      .select()
+      .single()
+    if (error && !isMissingTable(error.code)) throw error
+    if (!error) return data as unknown as BudgetMove
+  }
+  await updateLocal(user, (current) => ({
+    ...current,
+    budgetMoves: [
+      row,
+      ...current.budgetMoves.filter(
+        (move) => move.budget_id !== input.budget_id || move.from_date !== input.from_date,
+      ),
+    ].sort((a, b) => a.from_date.localeCompare(b.from_date)),
+  }))
+  return row
+}
+
+export async function deleteBudgetMove(user: AuthUser, id: string): Promise<void> {
+  if (usingSupabase && supabase) {
+    const { error } = await supabase.from('budget_moves').delete().eq('id', id).eq('user_id', user.id)
+    if (error && !isMissingTable(error.code)) throw error
+    if (!error) return
+  }
+  await updateLocal(user, (data) => ({
+    ...data,
+    budgetMoves: data.budgetMoves.filter((move) => move.id !== id),
+  }))
+}
+
 export async function upsertCashFlowSkip(user: AuthUser, input: CashFlowSkipInput): Promise<CashFlowSkip> {
   const row: CashFlowSkip = { ...input, id: makeId(), user_id: user.id }
   if (usingSupabase && supabase) {
@@ -1254,11 +1300,14 @@ export async function deleteBudget(user: AuthUser, id: string): Promise<void> {
       .eq('user_id', user.id)
       .like('event_key', `budget-${id}-%`)
     if (actualError) throw actualError
+    const { error: moveError } = await supabase.from('budget_moves').delete().eq('user_id', user.id).eq('budget_id', id)
+    if (moveError && !isMissingTable(moveError.code)) throw moveError
     return
   }
   await updateLocal(user, (data) => ({
     ...data,
     budgets: data.budgets.filter((budget) => budget.id !== id),
+    budgetMoves: data.budgetMoves.filter((move) => move.budget_id !== id),
     actuals: data.actuals.filter((actual) => !actual.event_key.startsWith(`budget-${id}-`)),
   }))
 }
@@ -1749,6 +1798,9 @@ function remapData(data: AppData, userId: string): AppData {
   const cashFlowSkips = data.cashFlowSkips.map((row) => ({
     ...row, id: freshId(row.id), user_id: userId, cash_flow_id: freshId(row.cash_flow_id),
   }))
+  const budgetMoves = (data.budgetMoves ?? []).map((row) => ({
+    ...row, id: freshId(row.id), user_id: userId, budget_id: freshId(row.budget_id),
+  }))
   const budgets = data.budgets.map((row) => ({
     ...row,
     id: freshId(row.id),
@@ -1772,6 +1824,11 @@ function remapData(data: AppData, userId: string): AppData {
   // leading id so a recorded amount still attaches to its recreated occurrence.
   const oldIds = [...idMap.keys()].sort((a, b) => b.length - a.length)
   const remapEventKey = (key: string): string => {
+    if (key.startsWith('budget-')) {
+      const body = key.slice('budget-'.length)
+      const oldId = oldIds.find((id) => body.startsWith(`${id}-`))
+      if (oldId) return `budget-${String(idMap.get(oldId))}-${body.slice(oldId.length + 1)}`
+    }
     const prefix = oldIds.find((oldId) => key.startsWith(`${oldId}-`))
     return prefix ? `${String(idMap.get(prefix))}-${key.slice(prefix.length + 1)}` : key
   }
@@ -1794,6 +1851,7 @@ function remapData(data: AppData, userId: string): AppData {
     cashFlowOverrides,
     cashFlowMoves,
     cashFlowSkips,
+    budgetMoves,
     budgets,
     goals,
     vendorRules,
@@ -1829,6 +1887,10 @@ function mergeData(current: AppData, incoming: AppData): AppData {
       [...current.cashFlowSkips, ...incoming.cashFlowSkips],
       (row) => `${row.cash_flow_id}|${row.date}`,
     ),
+    budgetMoves: by(
+      [...(current.budgetMoves ?? []), ...(incoming.budgetMoves ?? [])],
+      (row) => `${row.budget_id}|${row.from_date}`,
+    ),
     budgets: by([...current.budgets, ...incoming.budgets], (row) => budgetKey(row)),
     goals: by([...current.goals, ...incoming.goals], (row) => row.id),
     vendorRules: by([...current.vendorRules, ...incoming.vendorRules], (row) => row.vendor_key),
@@ -1859,6 +1921,7 @@ export async function importDataExport(
       'cash_flow_overrides',
       'cash_flow_moves',
       'cash_flow_skips',
+      'budget_moves',
       'loan_payments',
       'loans',
       'cash_flows',
@@ -1872,7 +1935,8 @@ export async function importDataExport(
     ]
     for (const table of children) {
       const { error } = await client.from(table).delete().eq('user_id', user.id)
-      if (error && !(table === 'categories' && isMissingTable(error.code))) throw error
+      if (error && !(table === 'categories' && isMissingTable(error.code))
+        && !(table === 'budget_moves' && isMissingTable(error.code))) throw error
     }
   }
 
@@ -1904,6 +1968,7 @@ export async function importDataExport(
   await writeRows('cash_flow_moves', imported.cashFlowMoves, 'user_id,cash_flow_id,from_date')
   await writeRows('cash_flow_skips', imported.cashFlowSkips, 'user_id,cash_flow_id,date')
   await writeRows('budgets', imported.budgets, 'user_id,category,period,start_date')
+  await writeRows('budget_moves', imported.budgetMoves, 'user_id,budget_id,from_date')
   await writeRows('goals', imported.goals)
   await writeRows('vendor_rules', imported.vendorRules, 'user_id,vendor_key')
   await writeRows('loans', imported.loans)

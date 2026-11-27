@@ -197,6 +197,40 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
       onNotify(`Income moved to ${longDate(targetDate)}.`)
       return
     }
+    if (event.source === 'budget') {
+      if (!event.budgetId) return
+      const originalDate = event.originalDate ?? event.date
+      if (event.moveId && targetDate === originalDate) {
+        await actions.deleteBudgetMove(event.moveId)
+        onNotify('Original date restored.')
+        return
+      }
+      if (targetDate === originalDate) return
+      // Recorded amounts stay where they happened, so a planned date can only
+      // move to or before the earliest linked recorded spend.
+      const linkedDates = data.actuals
+        .filter((item) => item.event_key === event.id)
+        .map((item) => item.date)
+        .sort()
+      if (linkedDates[0] && targetDate > linkedDates[0]) {
+        onNotify('A recorded spend cannot fall before its planned date.')
+        return
+      }
+      await actions.upsertBudgetMove({
+        budget_id: event.budgetId,
+        from_date: originalDate,
+        to_date: targetDate,
+      })
+      onNotify(`Planned spend moved to ${longDate(targetDate)}.`)
+      return
+    }
+    if (event.source === 'actual') {
+      const actual = data.actuals.find((item) => item.id === event.actualId)
+      if (!actual || targetDate === actual.date) return
+      await actions.upsertActual({ ...actual, date: targetDate })
+      onNotify(`Recorded spend moved to ${longDate(targetDate)}.`)
+      return
+    }
     if (!event.cashFlowId) return
     const originalDate = event.originalDate ?? event.date
     if (event.moveId && targetDate === originalDate) {
@@ -298,6 +332,12 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
   }
 
   async function deleteEvent(event: FlowEvent, scope: DeleteScope) {
+    if (event.source === 'actual') {
+      if (!event.actualId) return
+      await actions.deleteActual(event.actualId)
+      onNotify('Recorded spend deleted.')
+      return
+    }
     if (event.source === 'profile') {
       const sourceMonth = event.sourceMonth ?? event.date.slice(0, 7)
       const entry = data.monthlyIncomes.find((item) => item.month === sourceMonth)
@@ -354,7 +394,8 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
     try {
       setBusy(true)
       if (event.moveId) {
-        await actions.deleteCashFlowMove(event.moveId)
+        if (event.source === 'budget') await actions.deleteBudgetMove(event.moveId)
+        else await actions.deleteCashFlowMove(event.moveId)
       } else if (event.source === 'profile') {
         const sourceMonth = event.sourceMonth ?? event.date.slice(0, 7)
         const entry = data.monthlyIncomes.find((item) => item.month === sourceMonth)
@@ -406,8 +447,10 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
     : maxDate
   const isIncomePlan = active?.source === 'profile'
   const availableModes = active?.source === 'budget'
-    ? MODES.filter((option) => option.value === 'actual')
-    : MODES
+    ? MODES.filter((option) => option.value === 'actual' || option.value === 'move')
+    : active?.source === 'actual'
+      ? MODES.filter((option) => option.value === 'move' || option.value === 'delete')
+      : MODES
   const needsDate = mode === 'move' || mode === 'duplicate' || mode === 'split'
   const submitDisabled = busy || (needsDate && !draftDate)
 

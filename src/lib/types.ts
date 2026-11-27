@@ -129,6 +129,18 @@ export interface CashFlowMove {
   created_at?: string
 }
 
+/** Reschedules one planned-spend occurrence to a different calendar date. */
+export interface BudgetMove {
+  id: string
+  user_id: string
+  budget_id: string
+  /** Original budget occurrence date (YYYY-MM-DD). */
+  from_date: string
+  /** New occurrence date (YYYY-MM-DD). */
+  to_date: string
+  created_at?: string
+}
+
 /** Removes one scheduled occurrence from forecasts and the money trail. */
 export interface CashFlowSkip {
   id: string
@@ -266,6 +278,7 @@ export interface AppData {
   cashFlowOverrides: CashFlowOverride[]
   cashFlowMoves: CashFlowMove[]
   cashFlowSkips: CashFlowSkip[]
+  budgetMoves: BudgetMove[]
   budgets: Budget[]
   goals: Goal[]
   vendorRules: VendorRule[]
@@ -403,6 +416,7 @@ export type NewLoanPayment = Omit<LoanPayment, 'id' | 'user_id' | 'created_at' |
 export type NewMonthlyIncome = Omit<MonthlyIncome, 'id' | 'user_id' | 'created_at'>
 export type NewCashFlowOverride = Omit<CashFlowOverride, 'id' | 'user_id' | 'created_at'>
 export type NewCashFlowMove = Omit<CashFlowMove, 'id' | 'user_id' | 'created_at'>
+export type NewBudgetMove = Omit<BudgetMove, 'id' | 'user_id' | 'created_at'>
 export type NewCashFlowSkip = Omit<CashFlowSkip, 'id' | 'user_id' | 'created_at'>
 export type NewBudget = Omit<Budget, 'id' | 'user_id' | 'created_at'>
 export type NewGoal = Omit<Goal, 'id' | 'user_id' | 'created_at'>
@@ -428,6 +442,8 @@ export interface AppActions {
   deleteCashFlowOverride(id: string): Promise<void>
   upsertCashFlowMove(input: NewCashFlowMove): Promise<void>
   deleteCashFlowMove(id: string): Promise<void>
+  upsertBudgetMove(input: NewBudgetMove): Promise<void>
+  deleteBudgetMove(id: string): Promise<void>
   upsertCashFlowSkip(input: NewCashFlowSkip): Promise<void>
   deleteCashFlowSkip(id: string): Promise<void>
   upsertBudget(input: NewBudget): Promise<void>

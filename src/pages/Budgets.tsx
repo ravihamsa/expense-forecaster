@@ -290,28 +290,52 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
           <span className="status-pill">{futurePlans.length} planned · {formatMoney(futureTotal, currency)}</span>
         </div>
         {futurePlans.length ? (
-          <div className="ledger-list">
-            {futurePlans.map(({ event, monthLabel }) => (
-              <div className="ledger-row" key={event.id}>
-                <div className="ledger-main">
-                  <strong className="ledger-main-title">
-                    <CategoryBadge
-                      name={event.category}
-                      icon={categoryIconKey(data.categories, event.category, 'expense')}
-                      small
-                    />
-                    <span>{event.name}</span>
-                  </strong>
-                  <span>{monthLabel} · {formatDate(event.date)} · {event.category}</span>
+          <div className="upcoming-list">
+            {futurePlans.map(({ event, monthLabel }) => {
+              const recorded = event.actualAmount !== undefined && event.actualAmount !== null
+              const plan = data.budgets.find((budget) => budget.id === event.budgetId)
+              return (
+                <div className="upcoming-row" key={event.id}>
+                  <div className="upcoming-date">
+                    <span>{monthLabel}</span>
+                    <strong>{event.date.slice(-2)}</strong>
+                  </div>
+                  <div className="upcoming-main">
+                    <strong className="upcoming-title">
+                      <CategoryBadge
+                        name={event.category}
+                        icon={categoryIconKey(data.categories, event.category, 'expense')}
+                        small
+                      />
+                      <span>{event.name}</span>
+                    </strong>
+                    <span>
+                      {event.category}
+                      {event.moved && event.originalDate ? ` · moved from ${formatDate(event.originalDate)}` : ''}
+                    </span>
+                  </div>
+                  <div className="upcoming-amounts">
+                    <strong>{formatMoney(event.amount, currency)}</strong>
+                    <span className={recorded ? 'positive' : ''}>
+                      {recorded ? `Recorded ${formatMoney(event.actualAmount ?? 0, currency)}` : 'Not recorded yet'}
+                    </span>
+                  </div>
+                  <div className="upcoming-actions">
+                    {plan && (
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title="Edit this plan (affects all its occurrences)"
+                        aria-label={`Edit ${event.name}`}
+                        onClick={() => openEdit(plan)}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <strong>{formatMoney(event.amount, currency)}</strong>
-                <span className={event.actualAmount !== undefined && event.actualAmount !== null ? 'positive' : ''}>
-                  {event.actualAmount !== undefined && event.actualAmount !== null
-                    ? `Recorded ${formatMoney(event.actualAmount, currency)}`
-                    : 'Not recorded yet'}
-                </span>
-              </div>
-            ))}
+              )
+            })}
           </div>
         ) : (
           <div className="empty-state">
