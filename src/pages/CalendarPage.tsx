@@ -16,7 +16,7 @@ import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { actualFromEvent } from '../lib/actuals'
 import { categoryIconKey } from '../lib/categories'
-import { formatMoney, formatSigned } from '../lib/format'
+import { formatDate, formatMoney, formatSigned } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
 import type { AppActions, AppData, FlowEvent, MonthProjection } from '../lib/types'
 
@@ -43,6 +43,26 @@ function dateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+function parseDateKey(value: string): Date {
+  return new Date(`${value}T00:00:00`)
+}
+
+function addDays(value: string, days: number): string {
+  const date = parseDateKey(value)
+  date.setDate(date.getDate() + days)
+  return dateKey(date)
+}
+
+function startOfWeek(value: string): string {
+  const date = parseDateKey(value)
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7))
+  return dateKey(date)
+}
+
+function monthStartKey(year: number, monthIndex: number): string {
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`
+}
+
 function longDate(value: string): string {
   const date = new Date(`${value}T00:00:00`)
   if (Number.isNaN(date.getTime())) return value
@@ -56,6 +76,16 @@ function round(value: number): number {
 export default function CalendarPage({ data, months, actions, onNotify }: Props) {
   const currency = data.profile.currency || 'INR'
   const [selectedKey, setSelectedKey] = useState(months[0]?.key ?? '')
+  const [view, setView] = useState<'month' | 'week'>('month')
+  const [weekStart, setWeekStart] = useState(() => {
+    const first = months[0]
+    if (!first) return ''
+    const last = months[months.length - 1]
+    const min = monthStartKey(first.year, first.monthIndex)
+    const max = dateKey(new Date(last.year, last.monthIndex + 1, 0))
+    const todayKey = toDateInputValue()
+    return startOfWeek(todayKey >= min && todayKey <= max ? todayKey : min)
+  })
   const [active, setActive] = useState<FlowEvent | null>(null)
   const [mode, setMode] = useState<Mode>('move')
   const [draftDate, setDraftDate] = useState('')
@@ -70,6 +100,15 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
   useEffect(() => {
     if (!months.some((month) => month.key === selectedKey)) setSelectedKey(months[0]?.key ?? '')
   }, [months, selectedKey])
+
+  useEffect(() => {
+    const first = months[0]
+    if (!first) return
+    const last = months[months.length - 1]
+    const min = startOfWeek(monthStartKey(first.year, first.monthIndex))
+    const max = dateKey(new Date(last.year, last.monthIndex + 1, 0))
+    setWeekStart((current) => (current >= min && current <= max ? current : min))
+  }, [months])
 
   const index = Math.max(0, months.findIndex((month) => month.key === selectedKey))
   const month = months[index]
@@ -134,17 +173,47 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
   const maxDate = dateKey(new Date(lastMonth.year, lastMonth.monthIndex + 1, 0))
   const today = toDateInputValue()
 
-  const cells = useMemo(() => {
+  const monthCells = useMemo(() => {
     const offset = (new Date(month.year, month.monthIndex, 1).getDay() + 6) % 7
     return Array.from({ length: 42 }, (_, i) => new Date(month.year, month.monthIndex, i - offset + 1))
   }, [month.year, month.monthIndex])
+  const weekCells = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => parseDateKey(addDays(weekStart, i))),
+    [weekStart],
+  )
+  const cells = view === 'week' ? weekCells : monthCells
+  const eventLimit = view === 'week' ? 8 : 3
 
   const income = month.income + month.loanInflows
   const outgoing = month.expenses + month.loanPayments + month.extraPayment
 
   function moveMonth(delta: number) {
     const next = months[index + delta]
-    if (next) setSelectedKey(next.key)
+    if (!next) return
+    setSelectedKey(next.key)
+    if (view === 'week') setWeekStart(startOfWeek(monthStartKey(next.year, next.monthIndex)))
+  }
+
+  function moveWeek(delta: number) {
+    const next = addDays(weekStart, delta * 7)
+    if (next < startOfWeek(minDate) || next > maxDate) return
+    setWeekStart(next)
+    const nextMonth = next.slice(0, 7)
+    if (months.some((item) => item.key === nextMonth)) setSelectedKey(nextMonth)
+  }
+
+  function changeView(next: 'month' | 'week') {
+    setView(next)
+    if (next !== 'week') return
+    const thisMonth = monthStartKey(month.year, month.monthIndex)
+    const anchor = today >= minDate && today <= maxDate && today.slice(0, 7) === month.key ? today : thisMonth
+    setWeekStart(startOfWeek(anchor))
+  }
+
+  function jumpToToday() {
+    if (today < minDate || today > maxDate) return
+    setWeekStart(startOfWeek(today))
+    if (months.some((item) => item.key === today.slice(0, 7))) setSelectedKey(today.slice(0, 7))
   }
 
   function openAction(event: FlowEvent) {
@@ -475,17 +544,45 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
       <section className="card calendar-card">
         <div className="card-head">
           <div>
-            <h2>{month.label}</h2>
-            <p>Moving an entry changes this month’s net and the balance carried into later months.</p>
+            <h2>{view === 'week' ? `${formatDate(weekStart)} – ${formatDate(addDays(weekStart, 6))}` : month.label}</h2>
+            <p>
+              {view === 'week'
+                ? 'Move planned or recorded spends between days; the forecast updates with every change.'
+                : 'Moving an entry changes this month’s net and the balance carried into later months.'}
+            </p>
           </div>
           <div className="preview-controls">
+            <div className="segmented calendar-views" role="group" aria-label="Calendar view">
+              <button type="button" className={view === 'month' ? 'segment-active' : ''} onClick={() => changeView('month')}>Month</button>
+              <button type="button" className={view === 'week' ? 'segment-active' : ''} onClick={() => changeView('week')}>Week</button>
+            </div>
             <div className="month-stepper">
-              <button className="icon-button" aria-label="Previous month" title="Previous month" onClick={() => moveMonth(-1)} disabled={index <= 0}><ChevronLeft size={15} /></button>
-              <button className="icon-button" aria-label="Next month" title="Next month" onClick={() => moveMonth(1)} disabled={index >= months.length - 1}><ChevronRight size={15} /></button>
+              {view === 'month' ? (
+                <>
+                  <button className="icon-button" aria-label="Previous month" title="Previous month" onClick={() => moveMonth(-1)} disabled={index <= 0}><ChevronLeft size={15} /></button>
+                  <button className="icon-button" aria-label="Next month" title="Next month" onClick={() => moveMonth(1)} disabled={index >= months.length - 1}><ChevronRight size={15} /></button>
+                </>
+              ) : (
+                <>
+                  <button className="icon-button" aria-label="Previous week" title="Previous week" onClick={() => moveWeek(-1)} disabled={addDays(weekStart, -7) < startOfWeek(minDate)}><ChevronLeft size={15} /></button>
+                  <button className="icon-button" aria-label="Next week" title="Next week" onClick={() => moveWeek(1)} disabled={addDays(weekStart, 7) > maxDate}><ChevronRight size={15} /></button>
+                  <button type="button" className="btn btn-outline btn-small" onClick={jumpToToday} disabled={today < minDate || today > maxDate}>Today</button>
+                </>
+              )}
             </div>
             <label className="month-picker">
               <CalendarDays size={15} />
-              <select aria-label="Calendar month" value={month.key} onChange={(event) => setSelectedKey(event.target.value)}>
+              <select
+                aria-label="Calendar month"
+                value={month.key}
+                onChange={(event) => {
+                  setSelectedKey(event.target.value)
+                  if (view === 'week') {
+                    const next = months.find((item) => item.key === event.target.value)
+                    if (next) setWeekStart(startOfWeek(monthStartKey(next.year, next.monthIndex)))
+                  }
+                }}
+              >
                 {months.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
               </select>
             </label>
@@ -496,7 +593,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
           {WEEKDAYS.map((day) => <span key={day}>{day}</span>)}
         </div>
 
-        <div className="calendar-grid">
+        <div className={`calendar-grid ${view === 'week' ? 'week-view' : ''}`}>
           {cells.map((cell) => {
             const key = dateKey(cell)
             const dayEvents = eventsByDate.get(key) ?? []
@@ -522,7 +619,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
                   {key === today && <span className="calendar-today-label">Today</span>}
                 </div>
                 <div className="calendar-cell-events">
-                  {dayEvents.slice(0, 3).map((event) => {
+                  {dayEvents.slice(0, eventLimit).map((event) => {
                     if (event.skipped) {
                       return (
                         <div key={event.id} className="calendar-chip calendar-chip-static calendar-chip-skipped" title={`${event.name} is skipped on ${longDate(event.date)}`}>
@@ -587,7 +684,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
                       </div>
                     )
                   })}
-                  {dayEvents.length > 3 && <span className="calendar-more">+{dayEvents.length - 3} more</span>}
+                  {dayEvents.length > eventLimit && <span className="calendar-more">+{dayEvents.length - eventLimit} more</span>}
                 </div>
                 {dayEvents.length > 0 && (
                   <div className="calendar-day-totals">
@@ -605,7 +702,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
           <span><i className="legend-dot legend-expense" /> Expense</span>
           <span><i className="legend-dot legend-loan" /> Loan (read-only)</span>
           <span><CheckCircle2 size={12} /> Actual recorded</span>
-          <span>Click a budget to record an actual · drag income to reschedule</span>
+          <span>Click a planned spend to record an actual · drag entries to reschedule</span>
         </div>
 
         {skippedEvents.length > 0 && (

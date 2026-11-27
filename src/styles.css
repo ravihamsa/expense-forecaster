@@ -595,6 +595,9 @@ p { margin: 0; }
 /* ------------------------------ Calendar ------------------------------ */
 
 .calendar-card { overflow: hidden; }
+.calendar-views button { padding: 6px 13px; font-size: 12.5px; }
+.calendar-grid.week-view .calendar-day { min-height: 340px; }
+.calendar-grid.week-view .calendar-chip { padding: 7px 9px; font-size: 11px; }
 .calendar-weekdays {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1072,8 +1075,11 @@ p { margin: 0; }
   .funding-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .funding-table-head, .funding-table-row { grid-template-columns: minmax(90px, 1fr) repeat(6, minmax(92px, 0.8fr)); min-width: 700px; gap: 6px; font-size: 11px; }
   .funding-footer .link-button { margin-left: 0; }
+  .preview-controls { flex-wrap: wrap; justify-content: flex-end; }
   .calendar-weekdays span { padding: 7px 3px; font-size: 9px; text-align: center; }
   .calendar-day { min-height: 80px; padding: 5px; gap: 3px; }
+  .calendar-grid.week-view .calendar-day { min-height: 240px; }
+  .calendar-grid.week-view .calendar-chip { padding: 4px 5px; font-size: 9.5px; }
   .calendar-chip { grid-template-columns: minmax(0, 1fr); padding: 3px 4px; }
   .calendar-chip b, .calendar-day-totals, .calendar-today-label { display: none; }
   .calendar-day-head > span:first-child { width: 18px; height: 18px; font-size: 11px; }
