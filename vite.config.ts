@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  // GitHub Pages serves project sites from /<repo-name>/.
+  // Keep local dev at / and use the project path for production builds.
+  base: mode === 'production' ? '/expense-forecaster/' : '/',
   plugins: [react()],
   server: {
     host: true,
@@ -19,4 +22,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

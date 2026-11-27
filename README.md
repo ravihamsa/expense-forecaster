@@ -99,6 +99,28 @@ to the right occurrence. Profile settings are always taken from the file. The fi
 object with `app`, `version`, `exportedAt`, `source`, `account` and the full planner data under `data`,
 so it also works as a backup you can move between browsers.
 
+## Deploy to GitHub Pages
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) builds and deploys the site on every
+push to `main` (and on manual run from the Actions tab).
+
+1. In GitHub, open **Settings → Pages → Build and deployment** and choose **GitHub Actions** as the
+   source. The workflow will configure this automatically on its first run.
+2. Add repository secrets under **Settings → Secrets and variables → Actions → New repository
+   secret**:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+
+   Skip these if you want the deployed app to stay in local demo mode. Use the **anon public** key,
+   never the service-role key. Re-run the workflow after adding secrets so they are baked into the
+   build.
+3. Push to `main`, then open **Actions → Deploy to GitHub Pages** to watch the deployment.
+4. The site will be available at https://ravihamsa.github.io/expense-forecaster/.
+
+If you use Supabase, add that URL to **Supabase → Authentication → URL Configuration → Site URL**
+and **Redirect URLs** so email confirmation links return to the deployed app. If you rename the
+repository, update the `base` path in [`vite.config.ts`](vite.config.ts) too.
+
 ## Production build
 
 ```bash
@@ -131,6 +153,7 @@ src/
     types.ts              shared types
     supabaseClient.ts     Supabase client / configuration check
 supabase/schema.sql       database schema, RLS policies, signup trigger
+.github/workflows/deploy.yml  GitHub Pages build and deployment workflow
 ```
 
 ## How the forecast works
