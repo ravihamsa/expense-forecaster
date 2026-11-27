@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.View;
+import android.widget.AdapterView;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -23,6 +24,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedWriter;
@@ -34,15 +36,18 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Single-screen companion UI. Everything is built in code; there is no XML layout. */
+/** Small tabbed companion UI. Everything is built in code; there is no XML layout. */
 public final class MainActivity extends Activity {
     private static final int REQUEST_READ_SMS = 42;
     private static final int REQUEST_READ_SMS_CSV = 43;
@@ -50,20 +55,35 @@ public final class MainActivity extends Activity {
     private static final int CSV_BATCH_LIMIT = 100;
     private static final int VISIBLE_CANDIDATE_LIMIT = 20;
 
-    private static final String[] DEFAULT_CATEGORIES = {
+    private static final String[] DEFAULT_EXPENSE_CATEGORIES = {
             "Housing", "Utilities", "Groceries", "Transport", "Insurance", "Health", "Education",
             "Shopping", "Dining", "Entertainment", "Subscriptions", "Travel", "Lifestyle",
-            "Hobbies", "Investments", "Other", "Salary", "Business", "Freelance",
-            "Rent Received", "Interest", "Dividends", "Gifts"
+            "Hobbies", "Investments", "Other"
     };
+
+    private static final String[] DEFAULT_INCOME_CATEGORIES = {
+            "Salary", "Business", "Freelance", "Rent Received", "Interest", "Dividends", "Gifts", "Other"
+    };
+
+    private static final String[] RECURRENCES = {
+            "monthly", "one_time", "yearly", "every_n_months", "every_n_years"
+    };
+
+    private enum Screen { SCAN, DASHBOARD, CASH_FLOWS, CATEGORIES }
 
     private static final class AccountOption {
         final String id;
         final String name;
+        final double openingBalance;
 
         AccountOption(String id, String name) {
+            this(id, name, 0);
+        }
+
+        AccountOption(String id, String name, double openingBalance) {
             this.id = id;
             this.name = name;
+            this.openingBalance = openingBalance;
         }
     }
 
@@ -73,8 +93,19 @@ public final class MainActivity extends Activity {
     private LinearLayout content;
     private TextView statusView;
     private TextView summaryView;
+    private Screen screen = Screen.SCAN;
     private final List<AccountOption> accountOptions = new ArrayList<>();
     private final List<String> categoryOptions = new ArrayList<>();
+    private final List<String> expenseCategoryOptions = new ArrayList<>();
+    private final List<String> incomeCategoryOptions = new ArrayList<>();
+    private final List<CashFlowRow> cashFlowRows = new ArrayList<>();
+    private String dashboardStatus = "Loading dashboard…";
+    private String dashboardCurrency = "INR";
+    private double dashboardOpeningTotal;
+    private double dashboardPlannedIncome;
+    private double dashboardPlannedExpense;
+    private double dashboardActualIncome;
+    private double dashboardActualExpense;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,7 +115,12 @@ public final class MainActivity extends Activity {
         executor = Executors.newSingleThreadExecutor();
         accountOptions.add(new AccountOption("cash", "Cash in hand"));
         accountOptions.add(new AccountOption("bank", "Bank balance"));
-        for (String category : DEFAULT_CATEGORIES) {
+        for (String category : DEFAULT_EXPENSE_CATEGORIES) {
+            if (!expenseCategoryOptions.contains(category)) expenseCategoryOptions.add(category);
+            if (!categoryOptions.contains(category)) categoryOptions.add(category);
+        }
+        for (String category : DEFAULT_INCOME_CATEGORIES) {
+            if (!incomeCategoryOptions.contains(category)) incomeCategoryOptions.add(category);
             if (!categoryOptions.contains(category)) categoryOptions.add(category);
         }
 
@@ -117,10 +153,23 @@ public final class MainActivity extends Activity {
         statusView = null;
         summaryView = null;
         content.removeAllViews();
-        if (api.isSignedIn()) {
-            renderMainScreen();
-        } else {
+        if (!api.isSignedIn()) {
             renderAuthScreen();
+            return;
+        }
+        switch (screen) {
+            case DASHBOARD:
+                renderDashboardScreen();
+                break;
+            case CASH_FLOWS:
+                renderCashFlowsScreen();
+                break;
+            case CATEGORIES:
+                renderCategoriesScreen();
+                break;
+            default:
+                renderMainScreen();
+                break;
         }
     }
 
@@ -158,6 +207,7 @@ public final class MainActivity extends Activity {
                             runOnUiThread(new Runnable() {
                                 @Override
                                 public void run() {
+                                    screen = Screen.SCAN;
                                     renderScreen();
                                     loadAccounts();
                                     loadCategories();
@@ -185,6 +235,7 @@ public final class MainActivity extends Activity {
 
     private void renderMainScreen() {
         content.addView(heading("FinPlannar Companion"));
+        renderNav();
         statusView = note(statusText());
         content.addView(statusView);
 
@@ -216,6 +267,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onClick(View view) {
                 api.signOut();
+                screen = Screen.SCAN;
                 renderScreen();
                 toast("Signed out");
             }
@@ -245,6 +297,549 @@ public final class MainActivity extends Activity {
             }
         }
         content.addView(candidates);
+    }
+
+    // ------------------------------------------------------------ nav + dashboard
+
+    private void renderNav() {
+        LinearLayout first = navRow();
+        first.addView(choiceButton("Dashboard", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                screen = Screen.DASHBOARD;
+                dashboardStatus = "Loading dashboard…";
+                loadDashboard();
+                renderScreen();
+            }
+        }));
+        first.addView(choiceButton("Cash flows", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                screen = Screen.CASH_FLOWS;
+                renderScreen();
+                loadCashFlows();
+            }
+        }));
+        content.addView(first);
+
+        LinearLayout second = navRow();
+        second.addView(choiceButton("Categories", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                screen = Screen.CATEGORIES;
+                renderScreen();
+            }
+        }));
+        second.addView(choiceButton("SMS review", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                screen = Screen.SCAN;
+                renderScreen();
+            }
+        }));
+        content.addView(second);
+    }
+
+    private void renderDashboardScreen() {
+        content.addView(heading("Dashboard"));
+        renderNav();
+        content.addView(note(dashboardStatus));
+
+        double plannedNet = dashboardPlannedIncome - dashboardPlannedExpense;
+        double actualNet = dashboardActualIncome - dashboardActualExpense;
+        content.addView(note("Starting balance across accounts: "
+                + dashboardCurrency + " " + money(dashboardOpeningTotal)));
+        content.addView(note("Planned this month: +" + money(dashboardPlannedIncome)
+                + " income / -" + money(dashboardPlannedExpense)
+                + " expenses = " + (plannedNet >= 0 ? "+" : "") + money(plannedNet)));
+        content.addView(note("Recorded this month: +" + money(dashboardActualIncome)
+                + " income / -" + money(dashboardActualExpense)
+                + " expenses = " + (actualNet >= 0 ? "+" : "") + money(actualNet)));
+        content.addView(note("Simple projection at month end: " + dashboardCurrency + " "
+                + money(dashboardOpeningTotal + plannedNet)));
+
+        content.addView(note("Accounts"));
+        for (AccountOption account : accountOptions) {
+            content.addView(note(account.name + " — " + dashboardCurrency + " "
+                    + money(account.openingBalance)));
+        }
+
+        content.addView(note("Recent planned entries"));
+        int shown = 0;
+        for (CashFlowRow row : cashFlowRows) {
+            if (shown >= 5) break;
+            content.addView(note(row.name + " • " + row.kind + " • "
+                    + money(row.amount) + " • " + row.startDate));
+            shown += 1;
+        }
+        if (shown == 0) content.addView(note("No planned entries yet. Add one in Cash flows."));
+
+        content.addView(button("Refresh dashboard", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                dashboardStatus = "Refreshing dashboard…";
+                loadDashboard();
+                renderScreen();
+            }
+        }));
+    }
+
+    private void loadDashboard() {
+        if (!api.isSignedIn()) return;
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final String userId = api.getUserId();
+                    YearMonth month = YearMonth.now();
+                    String from = month.atDay(1).toString();
+                    String to = month.atEndOfMonth().toString();
+
+                    JSONArray profileRows = api.fetchProfile(userId);
+                    JSONArray accountRows = api.fetchAccounts(userId);
+                    JSONArray flowRows = api.fetchCashFlows(userId);
+                    JSONArray actualRows = api.fetchActuals(userId, from, to);
+
+                    final String currency = profileRows.length() > 0
+                            ? valueOr(profileRows.getJSONObject(0).optString("currency", ""), "INR")
+                            : "INR";
+                    final List<AccountOption> loadedAccounts = new ArrayList<AccountOption>();
+                    final double[] openingTotal = {0};
+                    for (int index = 0; index < accountRows.length(); index += 1) {
+                        JSONObject row = accountRows.getJSONObject(index);
+                        String id = row.optString("id", "");
+                        if (id.isEmpty()) continue;
+                        double balance = row.optDouble("opening_balance", 0);
+                        loadedAccounts.add(new AccountOption(
+                                id, valueOr(row.optString("name", ""), id), balance));
+                        openingTotal[0] += balance;
+                    }
+
+                    final List<CashFlowRow> loadedFlows = cashFlowRowsFrom(flowRows);
+                    final double[] plannedIncome = {0};
+                    final double[] plannedExpense = {0};
+                    for (CashFlowRow flow : loadedFlows) {
+                        if (!occursInMonth(flow, month)) continue;
+                        if ("income".equals(flow.kind)) {
+                            plannedIncome[0] += flow.amount;
+                        } else {
+                            plannedExpense[0] += flow.amount;
+                        }
+                    }
+
+                    final double[] actualIncome = {0};
+                    final double[] actualExpense = {0};
+                    for (int index = 0; index < actualRows.length(); index += 1) {
+                        JSONObject row = actualRows.getJSONObject(index);
+                        double amount = row.optDouble("amount", 0);
+                        if ("income".equals(row.optString("kind", ""))) {
+                            actualIncome[0] += amount;
+                        } else {
+                            actualExpense[0] += amount;
+                        }
+                    }
+
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen != Screen.DASHBOARD) return;
+                            if (!loadedAccounts.isEmpty()) {
+                                accountOptions.clear();
+                                accountOptions.addAll(loadedAccounts);
+                            }
+                            cashFlowRows.clear();
+                            cashFlowRows.addAll(loadedFlows);
+                            dashboardCurrency = currency;
+                            dashboardOpeningTotal = openingTotal[0];
+                            dashboardPlannedIncome = plannedIncome[0];
+                            dashboardPlannedExpense = plannedExpense[0];
+                            dashboardActualIncome = actualIncome[0];
+                            dashboardActualExpense = actualExpense[0];
+                            dashboardStatus = "Updated " + dateTimeOf(System.currentTimeMillis());
+                            renderScreen();
+                        }
+                    });
+                } catch (final Exception error) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen != Screen.DASHBOARD) return;
+                            dashboardStatus = "Dashboard failed: " + message(error);
+                            renderScreen();
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    // ------------------------------------------------------------- cash flow CRUD
+
+    private void renderCashFlowsScreen() {
+        content.addView(heading("Cash flows"));
+        renderNav();
+        content.addView(note("Edit planned entries here. SMS imports keep their source tag."));
+        content.addView(button("Add cash flow", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showCashFlowDialog(null);
+            }
+        }));
+
+        if (cashFlowRows.isEmpty()) {
+            content.addView(note("No cash-flow entries yet. Add one to include it in your plan."));
+            return;
+        }
+
+        for (final CashFlowRow flow : cashFlowRows) {
+            LinearLayout card = card();
+            TextView title = note(flow.name);
+            title.setTextSize(16f);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            card.addView(title);
+            card.addView(note(flow.kind + " • " + money(flow.amount) + " • "
+                    + flow.category + " • " + accountLabel(flow.account)));
+            card.addView(note("Schedule: " + flow.recurrence + " • from " + flow.startDate
+                    + ("sms".equals(flow.source) ? " • SMS import" : "")));
+            LinearLayout actions = navRow();
+            actions.addView(choiceButton("Edit", new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    showCashFlowDialog(flow);
+                }
+            }));
+            actions.addView(choiceButton("Delete", new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    confirmDeleteCashFlow(flow);
+                }
+            }));
+            card.addView(actions);
+            content.addView(card);
+        }
+    }
+
+    private void loadCashFlows() {
+        if (!api.isSignedIn()) return;
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final List<CashFlowRow> loaded = cashFlowRowsFrom(
+                            api.fetchCashFlows(api.getUserId()));
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen != Screen.CASH_FLOWS) return;
+                            cashFlowRows.clear();
+                            cashFlowRows.addAll(loaded);
+                            renderScreen();
+                        }
+                    });
+                } catch (final Exception error) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen == Screen.CASH_FLOWS) {
+                                toast("Could not load cash flows: " + message(error));
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void showCashFlowDialog(final CashFlowRow existing) {
+        final boolean editing = existing != null;
+        String initialKind = editing ? existing.kind : "expense";
+        String initialCategory = editing ? existing.category : "Other";
+        String initialAccount = editing ? existing.account : "bank";
+        String initialStartDate = editing ? existing.startDate : dateOf(System.currentTimeMillis());
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        final EditText name = textField("Name", editing ? existing.name : "");
+        form.addView(name);
+        final EditText amount = textField("Amount", editing ? String.valueOf(existing.amount) : "");
+        amount.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        form.addView(amount);
+
+        form.addView(note("Kind"));
+        final Spinner kind = stringSpinner(new String[]{"income", "expense"}, initialKind);
+        form.addView(kind);
+        form.addView(note("Category"));
+        final Spinner category = stringSpinner(categoryNamesFor(initialKind).toArray(new String[0]),
+                initialCategory);
+        form.addView(category);
+        final Spinner[] categoryHolder = new Spinner[1];
+        categoryHolder[0] = category;
+        kind.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String nextKind = String.valueOf(parent.getItemAtPosition(position));
+                List<String> names = categoryNamesFor(nextKind);
+                String current = String.valueOf(categoryHolder[0].getSelectedItem());
+                String selected = containsIgnoreCase(names, current)
+                        ? current : (names.isEmpty() ? "Other" : names.get(0));
+                setSpinnerItems(categoryHolder[0], names, selected);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+
+        form.addView(note("Account"));
+        final Spinner account = accountSpinner(initialAccount);
+        form.addView(account);
+        form.addView(note("Schedule"));
+        final Spinner recurrence = stringSpinner(RECURRENCES,
+                editing ? existing.recurrence : "monthly");
+        form.addView(recurrence);
+        final EditText startDate = textField("Start date (YYYY-MM-DD)", initialStartDate);
+        form.addView(startDate);
+        final EditText interval = textField("Repeat every N months / years",
+                String.valueOf(editing ? existing.intervalCount : 1));
+        interval.setInputType(InputType.TYPE_CLASS_NUMBER);
+        form.addView(interval);
+
+        final AlertDialog[] dialogHolder = new AlertDialog[1];
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(editing ? "Edit cash flow" : "Add cash flow")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", null)
+                .create();
+        dialogHolder[0] = dialog;
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                final Button save = dialogHolder[0].getButton(AlertDialog.BUTTON_POSITIVE);
+                save.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        String nameValue = name.getText().toString().trim();
+                        if (nameValue.isEmpty()) {
+                            toast("Enter a name");
+                            return;
+                        }
+                        double amountValue = parseAmount(amount.getText().toString());
+                        if (amountValue <= 0) {
+                            toast("Enter an amount greater than zero");
+                            return;
+                        }
+                        String dateValue = startDate.getText().toString().trim();
+                        try {
+                            LocalDate.parse(dateValue);
+                        } catch (Exception error) {
+                            toast("Use a date like 2026-11-27");
+                            return;
+                        }
+                        int intervalValue = 1;
+                        try {
+                            intervalValue = Integer.parseInt(interval.getText().toString().trim());
+                        } catch (Exception error) {
+                            toast("Repeat interval must be a whole number");
+                            return;
+                        }
+                        if (intervalValue < 1) {
+                            toast("Repeat interval must be at least 1");
+                            return;
+                        }
+
+                        final JSONObject payload = new JSONObject();
+                        try {
+                            payload.put("kind", String.valueOf(kind.getSelectedItem()));
+                            payload.put("name", nameValue);
+                            payload.put("amount", amountValue);
+                            payload.put("category", String.valueOf(categoryHolder[0].getSelectedItem()));
+                            payload.put("account", String.valueOf(account.getSelectedItem()));
+                            payload.put("recurrence", String.valueOf(recurrence.getSelectedItem()));
+                            payload.put("interval_count", intervalValue);
+                            payload.put("start_date", dateValue);
+                            payload.put("end_date", JSONObject.NULL);
+                            payload.put("source", editing ? existing.source : "manual");
+                            payload.put("note", "");
+                        } catch (JSONException error) {
+                            toast("Could not build this entry: " + message(error));
+                            return;
+                        }
+
+                        save.setEnabled(false);
+                        executor.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    String userId = api.getUserId();
+                                    if (editing) {
+                                        api.updateCashFlow(existing.id, userId, payload);
+                                    } else {
+                                        payload.put("user_id", userId);
+                                        api.createCashFlow(payload);
+                                    }
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            dialogHolder[0].dismiss();
+                                            toast(editing ? "Cash flow updated" : "Cash flow added");
+                                            loadCashFlows();
+                                            if (screen == Screen.DASHBOARD) loadDashboard();
+                                        }
+                                    });
+                                } catch (final Exception error) {
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            save.setEnabled(true);
+                                            toast("Could not save cash flow: " + message(error));
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+        });
+        dialog.show();
+    }
+
+    private void confirmDeleteCashFlow(final CashFlowRow flow) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete cash flow?")
+                .setMessage("Remove \"" + flow.name + "\" from your plan? Recorded actuals stay untouched.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        executor.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    api.deleteCashFlow(flow.id, api.getUserId());
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            toast("Cash flow deleted");
+                                            loadCashFlows();
+                                            if (screen == Screen.DASHBOARD) loadDashboard();
+                                        }
+                                    });
+                                } catch (final Exception error) {
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            toast("Could not delete cash flow: " + message(error));
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+                })
+                .show();
+    }
+
+    // ------------------------------------------------------------------ categories
+
+    private void renderCategoriesScreen() {
+        content.addView(heading("Categories"));
+        renderNav();
+        content.addView(note("Names added here are available in cash flows and SMS review."));
+        content.addView(button("Add category", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showAddCategoryDialog();
+            }
+        }));
+
+        content.addView(note("Expense categories"));
+        for (String category : expenseCategoryOptions) {
+            content.addView(note("• " + category));
+        }
+        content.addView(note("Income categories"));
+        for (String category : incomeCategoryOptions) {
+            content.addView(note("• " + category));
+        }
+        content.addView(note("Other is the fallback and always exists in both lists."));
+    }
+
+    private void showAddCategoryDialog() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        final EditText name = textField("Category name", "");
+        form.addView(name);
+        form.addView(note("List"));
+        final Spinner kind = stringSpinner(new String[]{"expense", "income"}, "expense");
+        form.addView(kind);
+
+        final AlertDialog[] dialogHolder = new AlertDialog[1];
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Add category")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Add", null)
+                .create();
+        dialogHolder[0] = dialog;
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                final Button save = dialogHolder[0].getButton(AlertDialog.BUTTON_POSITIVE);
+                save.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        final String clean = name.getText().toString().trim();
+                        if (clean.isEmpty()) {
+                            toast("Enter a category name");
+                            return;
+                        }
+                        final String kindValue = String.valueOf(kind.getSelectedItem());
+                        List<String> target = "income".equals(kindValue)
+                                ? incomeCategoryOptions : expenseCategoryOptions;
+                        if (containsIgnoreCase(target, clean)) {
+                            toast("That category already exists");
+                            return;
+                        }
+                        final String id = UUID.randomUUID().toString();
+                        save.setEnabled(false);
+                        executor.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    api.insertCategory(api.getUserId(), id, clean, kindValue);
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if ("income".equals(kindValue)) {
+                                                incomeCategoryOptions.add(clean);
+                                            } else {
+                                                expenseCategoryOptions.add(clean);
+                                            }
+                                            if (!categoryOptions.contains(clean)) {
+                                                categoryOptions.add(clean);
+                                            }
+                                            dialogHolder[0].dismiss();
+                                            toast("Category added");
+                                            renderScreen();
+                                        }
+                                    });
+                                } catch (final Exception error) {
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            save.setEnabled(true);
+                                            toast("Could not add category: " + message(error));
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+        });
+        dialog.show();
     }
 
     private void updateSummary(long monthStart) {
@@ -738,7 +1333,9 @@ public final class MainActivity extends Activity {
                         JSONObject row = rows.getJSONObject(index);
                         String id = row.optString("id", "");
                         if (id.isEmpty()) continue;
-                        loaded.add(new AccountOption(id, row.optString("name", id)));
+                        loaded.add(new AccountOption(id,
+                                valueOr(row.optString("name", ""), id),
+                                row.optDouble("opening_balance", 0)));
                     }
                     if (loaded.isEmpty()) return;
                     runOnUiThread(new Runnable() {
@@ -765,9 +1362,16 @@ public final class MainActivity extends Activity {
                 try {
                     JSONArray rows = api.fetchCategories(api.getUserId());
                     final List<String> loaded = new ArrayList<String>();
+                    final List<String> loadedExpense = new ArrayList<String>();
+                    final List<String> loadedIncome = new ArrayList<String>();
                     for (int index = 0; index < rows.length(); index += 1) {
-                        String name = rows.getJSONObject(index).optString("name", "").trim();
-                        if (!name.isEmpty() && !loaded.contains(name)) loaded.add(name);
+                        JSONObject row = rows.getJSONObject(index);
+                        String name = row.optString("name", "").trim();
+                        if (name.isEmpty()) continue;
+                        if (!loaded.contains(name)) loaded.add(name);
+                        List<String> target = "income".equals(row.optString("kind", ""))
+                                ? loadedIncome : loadedExpense;
+                        if (!target.contains(name)) target.add(name);
                     }
                     if (loaded.isEmpty()) return;
                     runOnUiThread(new Runnable() {
@@ -775,6 +1379,20 @@ public final class MainActivity extends Activity {
                         public void run() {
                             categoryOptions.clear();
                             categoryOptions.addAll(loaded);
+                            if (!loadedExpense.isEmpty()) {
+                                expenseCategoryOptions.clear();
+                                expenseCategoryOptions.addAll(loadedExpense);
+                            }
+                            if (!loadedIncome.isEmpty()) {
+                                incomeCategoryOptions.clear();
+                                incomeCategoryOptions.addAll(loadedIncome);
+                            }
+                            if (!containsIgnoreCase(expenseCategoryOptions, "Other")) {
+                                expenseCategoryOptions.add("Other");
+                            }
+                            if (!containsIgnoreCase(incomeCategoryOptions, "Other")) {
+                                incomeCategoryOptions.add("Other");
+                            }
                             renderScreen();
                         }
                     });
@@ -849,6 +1467,107 @@ public final class MainActivity extends Activity {
         view.setTextSize(16f);
         view.setPadding(dp(10), dp(8), dp(10), dp(8));
         return view;
+    }
+
+    private LinearLayout navRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return row;
+    }
+
+    private LinearLayout card() {
+        LinearLayout view = new LinearLayout(this);
+        view.setOrientation(LinearLayout.VERTICAL);
+        view.setBackgroundColor(Color.rgb(245, 245, 245));
+        view.setPadding(dp(12), dp(12), dp(12), dp(12));
+        return withTopMargin(view, dp(12));
+    }
+
+    private Spinner stringSpinner(String[] values, String selected) {
+        Spinner view = new Spinner(this);
+        setSpinnerItems(view, java.util.Arrays.asList(values), selected);
+        return withTopMargin(view, dp(8));
+    }
+
+    private void setSpinnerItems(Spinner spinner, List<String> values, String selected) {
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
+                android.R.layout.simple_list_item_1, values);
+        spinner.setAdapter(adapter);
+        int position = values.indexOf(selected);
+        spinner.setSelection(position >= 0 ? position : 0);
+    }
+
+    private List<String> categoryNamesFor(String kind) {
+        List<String> names = new ArrayList<String>(("income".equals(kind)
+                ? incomeCategoryOptions : expenseCategoryOptions));
+        if (!containsIgnoreCase(names, "Other")) names.add("Other");
+        return names;
+    }
+
+    private static boolean containsIgnoreCase(List<String> values, String target) {
+        if (target == null) return false;
+        for (String value : values) {
+            if (value != null && value.equalsIgnoreCase(target.trim())) return true;
+        }
+        return false;
+    }
+
+    private static String valueOr(String value, String fallback) {
+        return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    private static List<CashFlowRow> cashFlowRowsFrom(JSONArray rows) throws JSONException {
+        List<CashFlowRow> result = new ArrayList<CashFlowRow>();
+        for (int index = 0; index < rows.length(); index += 1) {
+            JSONObject row = rows.getJSONObject(index);
+            CashFlowRow flow = new CashFlowRow();
+            flow.id = row.optString("id", "");
+            flow.kind = "income".equals(row.optString("kind", "")) ? "income" : "expense";
+            flow.name = valueOr(row.optString("name", ""), flow.id.isEmpty() ? "Cash flow" : flow.id);
+            flow.amount = Math.abs(row.optDouble("amount", 0));
+            flow.category = valueOr(row.optString("category", ""), "Other");
+            flow.account = valueOr(row.optString("account", ""), "bank");
+            flow.recurrence = valueOr(row.optString("recurrence", ""), "monthly");
+            flow.intervalCount = Math.max(1, row.optInt("interval_count", 1));
+            flow.startDate = row.optString("start_date", "");
+            flow.source = valueOr(row.optString("source", ""), "manual");
+            result.add(flow);
+        }
+        return result;
+    }
+
+    private static boolean occursInMonth(CashFlowRow flow, YearMonth month) {
+        if (flow.startDate == null || flow.startDate.trim().isEmpty()) return false;
+        LocalDate start;
+        try {
+            start = LocalDate.parse(flow.startDate.trim());
+        } catch (Exception error) {
+            return false;
+        }
+        YearMonth startMonth = YearMonth.from(start);
+        if (startMonth.isAfter(month)) return false;
+        if ("one_time".equals(flow.recurrence)) return startMonth.equals(month);
+        if ("monthly".equals(flow.recurrence)) return true;
+        if ("yearly".equals(flow.recurrence)) return start.getMonthValue() == month.getMonthValue();
+        if ("every_n_months".equals(flow.recurrence)) {
+            int between = (month.getYear() - startMonth.getYear()) * 12
+                    + (month.getMonthValue() - startMonth.getMonthValue());
+            int every = Math.max(1, flow.intervalCount);
+            return between >= 0 && between % every == 0;
+        }
+        if ("every_n_years".equals(flow.recurrence)) {
+            int between = month.getYear() - startMonth.getYear();
+            int every = Math.max(1, flow.intervalCount);
+            return start.getMonthValue() == month.getMonthValue()
+                    && between >= 0 && between % every == 0;
+        }
+        return false;
+    }
+
+    private static String money(double amount) {
+        return String.format(Locale.US, "%,.2f", amount);
     }
 
     private static <T extends View> T withTopMargin(T view, int margin) {

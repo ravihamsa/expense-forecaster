@@ -30,6 +30,17 @@ transactions into the same Supabase account.
   `source = 'sms'`, so the web app can filter them under **SMS** and remove them with
   **Remove SMS imports** without touching manual entries. Learned vendor preferences are
   stored locally and upserted to `vendor_rules`.
+- **Dashboard.** A signed-in dashboard shows the sum of account opening balances, this
+  month's planned income/expenses from your cash-flow schedules, this month's recorded
+  amounts, and a simple month-end projection. Account names and the currency label come
+  from Supabase.
+- **Cash-flow CRUD.** The **Cash flows** tab lists planned entries from `cash_flows` and
+  lets you add, edit or delete them. Name, amount, kind, category, account, schedule, start
+  date and repeat interval are editable. SMS-imported rows keep `source = 'sms'` when
+  edited. Deleting a plan does not delete recorded actuals.
+- **Add categories.** The **Categories** tab lists your expense and income names and can
+  add a new one to `categories`. It immediately becomes available in cash-flow and SMS
+  review pickers. `Other` exists in both lists as the fallback.
 - **Session.** Email/password sign-in uses Supabase Auth; the access token, refresh token,
   user id and email are kept in `SharedPreferences` (`fp_companion_session`). Access tokens
   are refreshed automatically before a save. If no refresh token is available (for example
@@ -49,12 +60,13 @@ cp gradle.properties.example gradle.properties
 `gradle.properties` is gitignored. `app/build.gradle.kts` exposes these values as
 `BuildConfig.SUPABASE_URL` / `BuildConfig.SUPABASE_ANON_KEY` (empty by default).
 
-`cash_flows` and `actuals` are pre-existing tables; `vendor_rules` (one row per user and
-`vendor_key`, with RLS) is defined in `supabase/schema.sql` too. Re-run that schema once
-in the Supabase SQL editor before first use. It adds the `source` column used by the SMS
-tag. If `vendor_rules` is missing, cash flows and actuals still save; only the vendor-rule
-upsert fails. Retrying that row reuses the stored flow id, so it will not create a
-duplicate cash flow.
+`cash_flows` and `actuals` are pre-existing tables; `accounts`, `categories` and
+`vendor_rules` (with per-user RLS) are defined in `supabase/schema.sql` too. Re-run that
+schema, or the shorter `supabase/migrations/002_multi_accounts.sql`, in the Supabase SQL
+editor before first use. It adds the `source` column used by the SMS tag, text-id defaults
+for accounts/categories, and the default category lists. If `vendor_rules` is missing,
+cash flows and actuals still save; only the vendor-rule upsert fails. Retrying that row
+reuses the stored flow id, so it will not create a duplicate cash flow.
 
 ### Upgrading an older build
 

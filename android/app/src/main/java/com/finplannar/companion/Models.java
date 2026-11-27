@@ -65,3 +65,20 @@ final class VendorRule {
         this.autoApply = autoApply;
     }
 }
+
+/** A planned cash-flow row fetched from Supabase for the companion editor. */
+final class CashFlowRow {
+    String id = "";
+    String kind = "expense";
+    String name = "";
+    double amount;
+    String category = "Other";
+    String account = "bank";
+    String recurrence = "monthly";
+    int intervalCount = 1;
+    String startDate = "";
+    String source = "manual";
+
+    CashFlowRow() {
+    }
+}

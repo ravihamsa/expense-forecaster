@@ -139,11 +139,21 @@ final class SupabaseApi {
         }
     }
 
+    // ---------------------------------------------------------------- dashboard
+
+    /** Currency and display name used to label dashboard totals. */
+    JSONArray fetchProfile(String userId) throws IOException, JSONException {
+        String path = "/rest/v1/profiles?select=currency,display_name&user_id=eq."
+                + URLEncoder.encode(userId, "UTF-8");
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
     // ---------------------------------------------------------------- accounts
 
     /** Account ids and names available to this user, including custom funds. */
     JSONArray fetchAccounts(String userId) throws IOException, JSONException {
-        String path = "/rest/v1/accounts?select=id,name&user_id=eq."
+        String path = "/rest/v1/accounts?select=id,name,kind,opening_balance&user_id=eq."
                 + URLEncoder.encode(userId, "UTF-8")
                 + "&order=created_at.asc";
         String response = execute("GET", path, null, true, null);
@@ -159,7 +169,66 @@ final class SupabaseApi {
         return new JSONArray(response);
     }
 
+    /** Add a category from the phone. The id is sent explicitly so older databases work too. */
+    void insertCategory(String userId, String id, String name, String kind)
+            throws IOException, JSONException {
+        JSONObject payload = new JSONObject();
+        payload.put("user_id", userId);
+        payload.put("id", id);
+        payload.put("name", name);
+        payload.put("kind", "income".equals(kind) ? "income" : "expense");
+        execute("POST", "/rest/v1/categories", payload, true, "return=minimal");
+    }
+
     // --------------------------------------------------------------- cash flows
+
+    /** Planned cash-flow entries for the simple companion list/editor. */
+    JSONArray fetchCashFlows(String userId) throws IOException, JSONException {
+        String path = "/rest/v1/cash_flows?select="
+                + "id,kind,name,amount,category,account,recurrence,interval_count,start_date,source"
+                + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8")
+                + "&order=start_date.desc";
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
+    /** Recorded amounts in a date range, used by the dashboard's current-month totals. */
+    JSONArray fetchActuals(String userId, String fromDate, String toDate)
+            throws IOException, JSONException {
+        String path = "/rest/v1/actuals?select=kind,amount&user_id=eq."
+                + URLEncoder.encode(userId, "UTF-8")
+                + "&date=gte." + URLEncoder.encode(fromDate, "UTF-8")
+                + "&date=lte." + URLEncoder.encode(toDate, "UTF-8");
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
+    String createCashFlow(JSONObject row) throws IOException, JSONException {
+        String response = execute("POST", "/rest/v1/cash_flows", row,
+                true, "return=representation");
+        JSONArray rows = new JSONArray(response);
+        if (rows.length() == 0) {
+            throw new IOException("Supabase did not return the inserted cash_flows row");
+        }
+        String id = rows.getJSONObject(0).optString("id", "");
+        if (id.isEmpty()) {
+            throw new IOException("Supabase cash_flows row did not include an id");
+        }
+        return id;
+    }
+
+    void updateCashFlow(String id, String userId, JSONObject patch)
+            throws IOException, JSONException {
+        String path = "/rest/v1/cash_flows?id=eq." + URLEncoder.encode(id, "UTF-8")
+                + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8");
+        execute("PATCH", path, patch, true, "return=minimal");
+    }
+
+    void deleteCashFlow(String id, String userId) throws IOException {
+        String path = "/rest/v1/cash_flows?id=eq." + URLEncoder.encode(id, "UTF-8")
+                + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8");
+        execute("DELETE", path, null, true, "return=minimal");
+    }
 
     String insertCashFlow(Candidate candidate, String userId, String dateYyyyMmDd)
             throws IOException, JSONException {

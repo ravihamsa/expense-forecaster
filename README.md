@@ -145,6 +145,15 @@ same planner. It is **manual and foreground-only**: nothing watches SMS in the b
    they appear in the web dashboard, Actual vs plan, and the money trail. The rows are tagged
    `source = sms`.
 
+The app also has three more tabs:
+
+- **Dashboard** — account opening balances, this month's planned and recorded income/expenses,
+  and a simple month-end projection.
+- **Cash flows** — add, edit or delete planned entries. SMS-imported entries keep their `sms`
+  source tag when edited.
+- **Categories** — add expense or income names that immediately appear in the cash-flow and SMS
+  review pickers. `Other` is always kept as the fallback.
+
 In the web app, **Cash flow → SMS** and **Planned vs actual → SMS** show only imported rows with an
 **SMS** badge. **Remove SMS imports** deletes those rows (and their recorded amounts) while leaving
 manual entries untouched. Re-run `supabase/schema.sql` before using this filter so the `source`
@@ -203,7 +212,7 @@ src/
     supabaseClient.ts     Supabase client / configuration check
 supabase/schema.sql       database schema, RLS policies, signup trigger
 .github/workflows/deploy.yml  GitHub Pages build and deployment workflow
-android/                  Java Android SMS companion app (manual scan, vendor rules, Supabase sync)
+android/                  Java Android companion app (dashboard, cash-flow CRUD, categories, manual SMS scan)
 ```
 
 ## How the forecast works
