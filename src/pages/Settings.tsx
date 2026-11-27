@@ -55,6 +55,7 @@ function exportCounts(payload: DataExport): { label: string; value: number }[] {
     { label: 'Income plans', value: source.monthlyIncomes.length },
     { label: 'Budgets', value: source.budgets.length },
     { label: 'Goals', value: source.goals.length },
+    { label: 'Vendor rules', value: source.vendorRules?.length ?? 0 },
     { label: 'Actuals', value: source.actuals.length },
     { label: 'Loans', value: source.loans.length },
     { label: 'Payments', value: source.loanPayments.length },
