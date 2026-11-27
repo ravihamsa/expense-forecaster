@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import Modal from '../components/Modal'
 import CashFlowForm from '../components/CashFlowForm'
+import { isSmsImport } from '../lib/data'
 import { formatDate, formatMoney } from '../lib/format'
 import { nextOccurrence, recurrenceLabel, toDateInputValue } from '../lib/schedule'
 import type { AppActions, AppData, CashFlow, FlowKind, NewCashFlow } from '../lib/types'
@@ -20,7 +21,7 @@ interface Props {
   onNotify: (message: string) => void
 }
 
-type Filter = 'all' | FlowKind
+type Filter = 'all' | FlowKind | 'sms'
 
 function monthlyValue(flow: CashFlow): number {
   switch (flow.recurrence) {
@@ -40,7 +41,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
 
   const flows = useMemo(() => {
     return data.cashFlows
-      .filter((flow) => filter === 'all' || flow.kind === filter)
+      .filter((flow) => filter === 'all' || (filter === 'sms' ? isSmsImport(flow) : flow.kind === filter))
       .filter((flow) => `${flow.name} ${flow.category} ${flow.note}`.toLowerCase().includes(search.toLowerCase()))
       .sort((a, b) => (nextOccurrence(b)?.getTime() ?? 0) - (nextOccurrence(a)?.getTime() ?? 0))
   }, [data.cashFlows, filter, search])
@@ -51,6 +52,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
     const next = nextOccurrence(flow)
     return next !== null && flow.recurrence !== 'monthly'
   }).length
+  const smsCount = data.cashFlows.filter(isSmsImport).length
 
   async function handleSave(input: NewCashFlow) {
     if (modal?.mode === 'edit' && modal.flow) {
@@ -70,6 +72,17 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
       onNotify('Cash flow deleted.')
     } catch (caught) {
       onNotify(caught instanceof Error ? caught.message : 'Could not delete this entry.')
+    }
+  }
+
+  async function handleRemoveSms() {
+    if (!window.confirm(`Remove all ${smsCount} SMS-imported cash flows and their recorded amounts? Manual entries stay untouched.`)) return
+    try {
+      await actions.deleteSmsImports()
+      setFilter('all')
+      onNotify('SMS imports removed.')
+    } catch (caught) {
+      onNotify(caught instanceof Error ? caught.message : 'Could not remove SMS imports.')
     }
   }
 
@@ -97,13 +110,18 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
       <section className="card">
         <div className="toolbar">
           <div className="filter-tabs">
-            {(['all', 'income', 'expense'] as Filter[]).map((option) => (
+            {(['all', 'income', 'expense', 'sms'] as Filter[]).map((option) => (
               <button key={option} className={filter === option ? 'filter-active' : ''} onClick={() => setFilter(option)}>
-                {option === 'all' ? 'All' : option === 'income' ? 'Income' : 'Expenses'}
+                {option === 'all' ? 'All' : option === 'income' ? 'Income' : option === 'expense' ? 'Expenses' : `SMS (${smsCount})`}
               </button>
             ))}
           </div>
           <div className="search-box"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search entries…" /></div>
+          {smsCount > 0 && (
+            <button className="btn btn-danger btn-small" onClick={() => void handleRemoveSms()}>
+              <Trash2 size={14} /> Remove SMS imports
+            </button>
+          )}
         </div>
 
         {flows.length ? (
@@ -116,7 +134,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
                     {flow.kind === 'income' ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
                   </span>
                   <div className="flow-main">
-                    <strong>{flow.name}</strong>
+                    <strong>{flow.name}{isSmsImport(flow) && <span className="mini-tag" title="Imported from SMS">SMS</span>}</strong>
                     <span>{flow.category} · {recurrenceLabel(flow)}{flow.interval_count > 1 && (flow.recurrence === 'every_n_months' || flow.recurrence === 'every_n_years') ? ` (${flow.interval_count})` : ''}</span>
                   </div>
                   <div className="flow-date"><CalendarDays size={14} /> {next ? formatDate(toDateInputValue(next)) : 'Ended'}</div>

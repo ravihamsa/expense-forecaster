@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { ArrowDownLeft, ArrowUpRight, CheckCircle2, FileSpreadsheet, Plus, Search, Trash2, Upload } from 'lucide-react'
 import Modal from '../components/Modal'
 import { actualFromEvent, parseActualCsv } from '../lib/actuals'
+import { isSmsImport } from '../lib/data'
 import { formatDate, formatMoney } from '../lib/format'
 import type { AppActions, AppData, FlowEvent, Simulation } from '../lib/types'
 
@@ -13,7 +14,7 @@ interface Props {
   onNotify: (message: string) => void
 }
 
-type Filter = 'all' | 'income' | 'expense'
+type Filter = 'all' | 'income' | 'expense' | 'sms'
 
 export default function Actuals({ data, actions, simulation, currency, onNotify }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
@@ -33,10 +34,11 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
   )
 
   const rows = useMemo(() => data.actuals
-    .filter((actual) => filter === 'all' || actual.kind === filter)
+    .filter((actual) => filter === 'all' || (filter === 'sms' ? isSmsImport(actual) : actual.kind === filter))
     .filter((actual) => `${actual.name} ${actual.category} ${actual.note}`.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => b.date.localeCompare(a.date)), [data.actuals, filter, search])
 
+  const smsCount = data.actuals.filter(isSmsImport).length
   const incomeTotal = data.actuals.filter((actual) => actual.kind === 'income').reduce((sum, actual) => sum + actual.amount, 0)
   const expenseTotal = data.actuals.filter((actual) => actual.kind === 'expense').reduce((sum, actual) => sum + actual.amount, 0)
 
@@ -78,6 +80,17 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
       onNotify('Actual removed.')
     } catch (caught) {
       onNotify(caught instanceof Error ? caught.message : 'Could not remove this actual.')
+    }
+  }
+
+  async function handleRemoveSms() {
+    if (!window.confirm(`Remove all ${smsCount} SMS-imported actuals and their cash flows? Manual entries stay untouched.`)) return
+    try {
+      await actions.deleteSmsImports()
+      setFilter('all')
+      onNotify('SMS imports removed.')
+    } catch (caught) {
+      onNotify(caught instanceof Error ? caught.message : 'Could not remove SMS imports.')
     }
   }
 
@@ -141,13 +154,18 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
         </div>
         <div className="toolbar">
           <div className="filter-tabs">
-            {(['all', 'income', 'expense'] as Filter[]).map((option) => (
+            {(['all', 'income', 'expense', 'sms'] as Filter[]).map((option) => (
               <button key={option} className={filter === option ? 'filter-active' : ''} onClick={() => setFilter(option)}>
-                {option === 'all' ? 'All' : option === 'income' ? 'Income' : 'Expenses'}
+                {option === 'all' ? 'All' : option === 'income' ? 'Income' : option === 'expense' ? 'Expenses' : `SMS (${smsCount})`}
               </button>
             ))}
           </div>
           <div className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search actuals…" /></div>
+          {smsCount > 0 && (
+            <button className="btn btn-danger btn-small" onClick={() => void handleRemoveSms()}>
+              <Trash2 size={14} /> Remove SMS imports
+            </button>
+          )}
         </div>
 
         {rows.length ? (
@@ -158,7 +176,7 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
                   {actual.kind === 'income' ? <ArrowDownLeft size={17} /> : <ArrowUpRight size={17} />}
                 </span>
                 <div className="actual-main">
-                  <strong>{actual.name}</strong>
+                  <strong>{actual.name}{isSmsImport(actual) && <span className="mini-tag" title="Imported from SMS">SMS</span>}</strong>
                   <span>{formatDate(actual.date)} · {actual.category || (actual.kind === 'income' ? 'Income' : 'Other')}{actual.note ? ` · ${actual.note}` : ''}</span>
                 </div>
                 <strong className={actual.kind === 'income' ? 'positive' : ''}>

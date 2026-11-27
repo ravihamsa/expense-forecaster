@@ -27,6 +27,7 @@ import java.time.Instant;
 final class SupabaseApi {
     private static final String PREFS_NAME = "fp_companion_session";
     private static final String KEY_TOKEN = "access_token";
+    private static final String KEY_REFRESH_TOKEN = "refresh_token";
     private static final String KEY_USER_ID = "user_id";
     private static final String KEY_EMAIL = "email";
 
@@ -80,9 +81,62 @@ final class SupabaseApi {
         }
         prefs.edit()
                 .putString(KEY_TOKEN, token)
+                .putString(KEY_REFRESH_TOKEN, json.optString("refresh_token", ""))
                 .putString(KEY_USER_ID, userId)
                 .putString(KEY_EMAIL, email)
                 .apply();
+    }
+
+    /**
+     * Supabase access tokens expire in about an hour. Refresh before a save so an
+     * older session does not silently fail after the user has reviewed many messages.
+     */
+    void ensureFreshToken() throws IOException, JSONException {
+        String token = getAccessToken();
+        if (token.isEmpty()) {
+            throw new IOException("No Supabase session. Please sign in again.");
+        }
+        long expiresAt = expiresAt(token);
+        if (expiresAt == 0 || expiresAt > System.currentTimeMillis() + 60_000L) {
+            return;
+        }
+        String refreshToken = prefs.getString(KEY_REFRESH_TOKEN, "");
+        if (refreshToken.isEmpty()) {
+            prefs.edit().clear().apply();
+            throw new IOException("Session expired. Please sign in again.");
+        }
+        JSONObject payload = new JSONObject();
+        payload.put("refresh_token", refreshToken);
+        String response = execute("POST", "/auth/v1/token?grant_type=refresh_token",
+                payload, false, null);
+        JSONObject json = new JSONObject(response);
+        String newToken = json.optString("access_token", "");
+        if (newToken.isEmpty()) {
+            prefs.edit().clear().apply();
+            throw new IOException("Session refresh failed. Please sign in again.");
+        }
+        JSONObject user = json.optJSONObject("user");
+        String userId = user == null ? getUserId() : user.optString("id", getUserId());
+        prefs.edit()
+                .putString(KEY_TOKEN, newToken)
+                .putString(KEY_REFRESH_TOKEN, json.optString("refresh_token", refreshToken))
+                .putString(KEY_USER_ID, userId)
+                .putString(KEY_EMAIL, getEmail())
+                .apply();
+    }
+
+    private static long expiresAt(String token) {
+        String[] parts = token.split("\\.");
+        if (parts.length < 2) {
+            return 0;
+        }
+        try {
+            byte[] decoded = java.util.Base64.getUrlDecoder().decode(parts[1]);
+            JSONObject payload = new JSONObject(new String(decoded, StandardCharsets.UTF_8));
+            return payload.optLong("exp", 0) * 1000L;
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
 
     // --------------------------------------------------------------- cash flows
@@ -100,6 +154,7 @@ final class SupabaseApi {
         payload.put("interval_count", 1);
         payload.put("start_date", dateYyyyMmDd);
         payload.put("end_date", JSONObject.NULL);
+        payload.put("source", "sms");
         payload.put("note", "Imported from SMS");
 
         String response = execute("POST", "/rest/v1/cash_flows", payload,
@@ -133,6 +188,7 @@ final class SupabaseApi {
         payload.put("category", valueOr(candidate.category, ""));
         payload.put("kind", "income".equals(candidate.kind) ? "income" : "expense");
         payload.put("amount", Math.abs(candidate.amount));
+        payload.put("source", "sms");
         payload.put("note", "Imported from SMS");
 
         // on_conflict keeps a retry idempotent if a later step (e.g. vendor rule) failed.
@@ -183,11 +239,12 @@ final class SupabaseApi {
                 connection.setRequestProperty("Prefer", prefer);
             }
             if (authenticated) {
-                String token = getAccessToken();
-                if (token.isEmpty()) {
-                    throw new IOException("No Supabase session. Please sign in again.");
+                try {
+                    ensureFreshToken();
+                } catch (JSONException exception) {
+                    throw new IOException("Could not refresh Supabase session", exception);
                 }
-                connection.setRequestProperty("Authorization", "Bearer " + token);
+                connection.setRequestProperty("Authorization", "Bearer " + getAccessToken());
             }
 
             if (body != null) {

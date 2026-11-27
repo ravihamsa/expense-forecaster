@@ -122,6 +122,7 @@ export default function App() {
       deleteGoal: (id) => run(() => api.deleteGoal(user!, id), 'Goal removed.'),
       upsertActual: (input) => run(() => api.upsertActual(user!, input).then(() => undefined), 'Actual amount saved.'),
       deleteActual: (id) => run(() => api.deleteActual(user!, id), 'Actual amount removed.'),
+      deleteSmsImports: () => run(() => api.deleteSmsImports(user!), 'SMS imports removed.'),
       addLoan: (input) => run(() => api.addLoan(user!, input).then(() => undefined), 'Loan added.'),
       updateLoan: (id, patch) => run(() => api.updateLoan(user!, id, patch), 'Loan updated.'),
       deleteLoan: (id) => run(() => api.deleteLoan(user!, id), 'Loan removed.'),

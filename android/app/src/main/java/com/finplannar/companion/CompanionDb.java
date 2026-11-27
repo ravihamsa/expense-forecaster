@@ -15,7 +15,7 @@ import java.util.List;
  */
 final class CompanionDb extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "finplannar_companion";
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
 
     private static final String TABLE_SCAN_STATE = "scan_state";
     private static final String TABLE_VENDOR_RULES = "vendor_rules";
@@ -90,6 +90,12 @@ final class CompanionDb extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE " + TABLE_SMS_EVENTS + " ADD COLUMN "
                     + COL_REVIEWED + " INTEGER DEFAULT 0");
         }
+        if (oldVersion < 3) {
+            // The parser changed substantially. Re-scan so old guesses do not survive.
+            // Learned vendor rules are intentionally preserved.
+            db.execSQL("DELETE FROM " + TABLE_SMS_EVENTS);
+            db.execSQL("DELETE FROM " + TABLE_SCAN_STATE);
+        }
     }
 
     // ---------------------------------------------------------------- scan state
@@ -160,7 +166,7 @@ final class CompanionDb extends SQLiteOpenHelper {
         values.put(COL_KIND, candidate.kind);
         values.put(COL_SOURCE, candidate.source);
         values.put(COL_IGNORED, candidate.ignored ? 1 : 0);
-        values.put(COL_REVIEWED, 0);
+        values.put(COL_REVIEWED, candidate.reviewed ? 1 : 0);
         values.put(COL_SYNCED, candidate.synced ? 1 : 0);
         if (candidate.remoteFlowId == null) {
             values.putNull(COL_REMOTE_FLOW_ID);
@@ -285,6 +291,7 @@ final class CompanionDb extends SQLiteOpenHelper {
         candidate.kind = text(cursor, COL_KIND);
         candidate.source = text(cursor, COL_SOURCE);
         candidate.ignored = cursor.getInt(cursor.getColumnIndexOrThrow(COL_IGNORED)) != 0;
+        candidate.reviewed = cursor.getInt(cursor.getColumnIndexOrThrow(COL_REVIEWED)) != 0;
         candidate.synced = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SYNCED)) != 0;
         candidate.remoteFlowId = text(cursor, COL_REMOTE_FLOW_ID);
         return candidate;

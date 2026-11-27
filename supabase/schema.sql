@@ -71,10 +71,21 @@ create table if not exists public.cash_flows (
   interval_count integer not null default 1 check (interval_count > 0),
   start_date date not null default current_date,
   end_date date,
+  source text not null default 'manual' check (source in ('manual', 'sms')),
   note text not null default '',
   created_at timestamptz not null default now(),
   constraint cash_flows_date_order check (end_date is null or end_date >= start_date)
 );
+
+-- Existing projects: add the import tag without changing manual rows.
+alter table public.cash_flows add column if not exists source text not null default 'manual';
+do $$
+begin
+  alter table public.cash_flows
+    add constraint cash_flows_source_check check (source in ('manual', 'sms'));
+exception
+  when duplicate_object then null;
+end $$;
 
 -- Fixed amounts for individual occurrences of a scheduled cash flow.
 create table if not exists public.cash_flow_overrides (
@@ -286,10 +297,20 @@ create table if not exists public.actuals (
   category text not null default '',
   kind text not null check (kind in ('income', 'expense')),
   amount numeric(14, 2) not null check (amount >= 0),
+  source text not null default 'manual' check (source in ('manual', 'sms')),
   note text not null default '',
   created_at timestamptz not null default now(),
   unique (user_id, event_key)
 );
+
+alter table public.actuals add column if not exists source text not null default 'manual';
+do $$
+begin
+  alter table public.actuals
+    add constraint actuals_source_check check (source in ('manual', 'sms'));
+exception
+  when duplicate_object then null;
+end $$;
 
 create index if not exists actuals_user_idx on public.actuals(user_id);
 create index if not exists actuals_date_idx on public.actuals(date);

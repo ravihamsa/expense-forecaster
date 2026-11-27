@@ -36,6 +36,7 @@ final class Candidate {
     String kind = "expense";   // "income" or "expense"
     String source = "parsed";  // "learned" or "parsed"
     boolean ignored;
+    boolean reviewed;
     boolean synced;
     String remoteFlowId;
 

@@ -134,7 +134,13 @@ same planner. It is **manual and foreground-only**: nothing watches SMS in the b
 3. Mark each message **Expense**, **Income**, or **Ignore**. Vendor, category, and account are
    pre-filled from learned rules and can be edited.
 4. Tap **Save selected**. Confirmed messages become one-time cash flows plus matching actuals, so
-   they appear in the web dashboard, Actual vs plan, and the money trail.
+   they appear in the web dashboard, Actual vs plan, and the money trail. The rows are tagged
+   `source = sms`.
+
+In the web app, **Cash flow → SMS** and **Planned vs actual → SMS** show only imported rows with an
+**SMS** badge. **Remove SMS imports** deletes those rows (and their recorded amounts) while leaving
+manual entries untouched. Re-run `supabase/schema.sql` before using this filter so the `source`
+columns exist.
 
 Vendor rules are saved per signed-in user in Supabase (`public.vendor_rules`). Once you classify a
 vendor, future messages from the same sender and merchant are pre-filled with the same kind,

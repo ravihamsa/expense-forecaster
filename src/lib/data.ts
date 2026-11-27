@@ -37,6 +37,10 @@ export interface AuthUser {
 
 export const usingSupabase = isSupabaseConfigured && supabase !== null
 
+export function isSmsImport(row: { source?: string }): boolean {
+  return row.source === 'sms'
+}
+
 // ---------------------------------------------------------------------------
 // Local demo mode (used only when Supabase env vars are not configured)
 // ---------------------------------------------------------------------------
@@ -768,6 +772,57 @@ export async function deleteActual(user: AuthUser, id: string): Promise<void> {
     ...data,
     actuals: data.actuals.filter((actual) => actual.id !== id),
   }))
+}
+
+export async function deleteSmsImports(user: AuthUser): Promise<void> {
+  if (usingSupabase && supabase) {
+    const { data: flows, error: lookupError } = await supabase
+      .from('cash_flows')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('source', 'sms')
+    if (lookupError) throw lookupError
+
+    const { error: actualError } = await supabase
+      .from('actuals')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('source', 'sms')
+    if (actualError) throw actualError
+
+    const ids = (flows ?? []).map((flow) => flow.id as string)
+    if (ids.length > 0) {
+      const results = await Promise.all([
+        supabase.from('cash_flow_overrides').delete().eq('user_id', user.id).in('cash_flow_id', ids),
+        supabase.from('cash_flow_moves').delete().eq('user_id', user.id).in('cash_flow_id', ids),
+        supabase.from('cash_flow_skips').delete().eq('user_id', user.id).in('cash_flow_id', ids),
+      ])
+      const dependentError = results.find((result) => result.error)?.error
+      if (dependentError) throw dependentError
+
+      const { error: flowError } = await supabase
+        .from('cash_flows')
+        .delete()
+        .eq('user_id', user.id)
+        .in('id', ids)
+      if (flowError) throw flowError
+    }
+    return
+  }
+
+  await updateLocal(user, (data) => {
+    const ids = new Set(data.cashFlows.filter(isSmsImport).map((flow) => flow.id))
+    return {
+      ...data,
+      cashFlows: data.cashFlows.filter((flow) => !ids.has(flow.id)),
+      cashFlowOverrides: data.cashFlowOverrides.filter((row) => !ids.has(row.cash_flow_id)),
+      cashFlowMoves: data.cashFlowMoves.filter((row) => !ids.has(row.cash_flow_id)),
+      cashFlowSkips: data.cashFlowSkips.filter((row) => !ids.has(row.cash_flow_id)),
+      actuals: data.actuals.filter(
+        (actual) => !isSmsImport(actual) && !(actual.cash_flow_id && ids.has(actual.cash_flow_id)),
+      ),
+    }
+  })
 }
 
 export async function addLoan(user: AuthUser, input: LoanInput): Promise<Loan> {

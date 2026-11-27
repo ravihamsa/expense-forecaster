@@ -25,10 +25,14 @@ transactions into the same Supabase account.
   review queue and moves it to **Ready to save**; nothing is uploaded until you tap
   **Save selected**.
 - **Existing tables.** Confirmed rows go to `cash_flows` (as `one_time`) and `actuals`
-  (with the same `flowId-epochMillis` event key the web app uses). Learned vendor
-  preferences are stored locally and upserted to `vendor_rules`.
-- **Session.** Email/password sign-in uses Supabase Auth; the access token, user id and
-  email are kept in `SharedPreferences` (`fp_companion_session`). Sign out clears them.
+  (with the same `flowId-epochMillis` event key the web app uses). Both rows carry
+  `source = 'sms'`, so the web app can filter them under **SMS** and remove them with
+  **Remove SMS imports** without touching manual entries. Learned vendor preferences are
+  stored locally and upserted to `vendor_rules`.
+- **Session.** Email/password sign-in uses Supabase Auth; the access token, refresh token,
+  user id and email are kept in `SharedPreferences` (`fp_companion_session`). Access tokens
+  are refreshed automatically before a save. If no refresh token is available (for example
+  after upgrading from an older build), sign in again. Sign out clears everything.
 
 ## Configure Supabase
 
@@ -46,9 +50,17 @@ cp gradle.properties.example gradle.properties
 
 `cash_flows` and `actuals` are pre-existing tables; `vendor_rules` (one row per user and
 `vendor_key`, with RLS) is defined in `supabase/schema.sql` too. Re-run that schema once
-in the Supabase SQL editor before first use. If `vendor_rules` is missing, cash flows and
-actuals still save; only the vendor-rule upsert fails. Retrying that row reuses the
-stored flow id, so it will not create a duplicate cash flow.
+in the Supabase SQL editor before first use. It adds the `source` column used by the SMS
+tag. If `vendor_rules` is missing, cash flows and actuals still save; only the vendor-rule
+upsert fails. Retrying that row reuses the stored flow id, so it will not create a
+duplicate cash flow.
+
+### Upgrading an older build
+
+Version 3 of the local database clears previously reviewed SMS suggestions so the corrected
+parser can classify them again. Learned vendor rules are preserved. Tap **Scan SMS** again
+after installing. Because the session format now includes a refresh token, sign in again if
+**Save selected** reports that the session expired.
 
 ## Reviewing parser output
 

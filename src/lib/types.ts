@@ -54,6 +54,8 @@ export interface CashFlow {
   interval_count: number
   start_date: string
   end_date: string | null
+  /** Set to 'sms' for one-time rows imported from the Android companion. */
+  source?: string
   note: string
   created_at?: string
 }
@@ -150,6 +152,8 @@ export interface Actual {
   category: string
   kind: FlowKind
   amount: number
+  /** Set to 'sms' for actuals imported from the Android companion. */
+  source?: string
   note: string
   created_at?: string
 }
@@ -342,6 +346,8 @@ export interface AppActions {
   deleteGoal(id: string): Promise<void>
   upsertActual(input: NewActual): Promise<void>
   deleteActual(id: string): Promise<void>
+  /** Remove all SMS-tagged cash flows, actuals, and their dependent edits. */
+  deleteSmsImports(): Promise<void>
   addLoan(input: NewLoan): Promise<void>
   updateLoan(id: string, patch: Partial<NewLoan>): Promise<void>
   deleteLoan(id: string): Promise<void>
