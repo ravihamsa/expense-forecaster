@@ -24,6 +24,7 @@ import android.widget.Toast;
 
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -33,6 +34,8 @@ import java.util.concurrent.Executors;
 /** Single-screen companion UI. Everything is built in code; there is no XML layout. */
 public final class MainActivity extends Activity {
     private static final int REQUEST_READ_SMS = 42;
+    private static final int SCAN_BATCH_LIMIT = 50;
+    private static final int VISIBLE_CANDIDATE_LIMIT = 20;
     private static final String[] ACCOUNTS = {"cash", "bank"};
 
     private CompanionDb db;
@@ -172,28 +175,34 @@ public final class MainActivity extends Activity {
             }
         }));
 
+        final long monthStart = startOfCurrentMonthMillis();
         summaryView = note("");
-        updateSummary();
+        updateSummary(monthStart);
         content.addView(summaryView);
 
         LinearLayout candidates = new LinearLayout(this);
         candidates.setOrientation(LinearLayout.VERTICAL);
         candidates.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        List<Candidate> pending = db.pendingCandidates();
+        List<Candidate> pending = db.pendingCandidates(monthStart, VISIBLE_CANDIDATE_LIMIT);
+        int pendingCount = db.countPending(monthStart);
         if (pending.isEmpty()) {
-            candidates.addView(note("No pending candidates. Tap Scan SMS to review new messages."));
+            candidates.addView(note("No current-month pending candidates. Tap Scan SMS to review new messages."));
         } else {
             for (Candidate candidate : pending) {
                 addCandidateCard(candidates, candidate);
+            }
+            if (pendingCount > pending.size()) {
+                candidates.addView(note("Showing " + pending.size() + " of " + pendingCount
+                        + " current-month pending messages. Save or ignore these to see more."));
             }
         }
         content.addView(candidates);
     }
 
-    private void updateSummary() {
+    private void updateSummary(long monthStart) {
         if (summaryView != null) {
-            summaryView.setText("Pending: " + db.pendingCandidates().size()
+            summaryView.setText("Pending this month: " + db.countPending(monthStart)
                     + "  •  Synced: " + db.countSynced()
                     + "  •  Ignored: " + db.countIgnored());
         }
@@ -315,38 +324,50 @@ public final class MainActivity extends Activity {
     }
 
     private void runScan() {
-        final long lastScanAt = db.getLastScanAt();
+        final long monthStart = startOfCurrentMonthMillis();
+        final long lastId = db.getLastScanId();
         final ContentResolver resolver = getContentResolver();
-        setStatus("Scanning received SMS…");
+        setStatus("Scanning current-month SMS…");
         executor.execute(new Runnable() {
             @Override
             public void run() {
                 try {
                     SmsScanner scanner = new SmsScanner(resolver);
                     TransactionParser parser = new TransactionParser(db);
-                    List<SmsItem> messages = scanner.scanSince(lastScanAt);
-                    long maxDate = lastScanAt;
+                    List<SmsItem> messages = scanner.scanSince(
+                            monthStart, lastId, SCAN_BATCH_LIMIT);
+                    long maxId = lastId;
+                    long maxDate = 0;
                     int inserted = 0;
                     for (SmsItem message : messages) {
                         String fingerprint = SmsScanner.fingerprint(message);
-                        if (!db.hasFingerprint(fingerprint)) {
-                            if (db.insertCandidate(parser.parse(message))) {
-                                inserted++;
-                            }
+                        if (!db.hasFingerprint(fingerprint)
+                                && db.insertCandidate(parser.parse(message))) {
+                            inserted++;
                         }
+                        maxId = Math.max(maxId, message.id);
                         maxDate = Math.max(maxDate, message.smsDate);
                     }
-                    // The cursor advances past everything we read; fingerprint dedupe
-                    // protects against any message that was already stored.
-                    if (maxDate > lastScanAt) {
-                        db.setLastScanAt(maxDate);
+                    // The id cursor advances only past messages we actually processed, so
+                    // a batch limit never skips older current-month messages.
+                    if (!messages.isEmpty()) {
+                        db.setLastScanId(maxId);
+                        if (maxDate > 0) {
+                            db.setLastScanAt(maxDate);
+                        }
                     }
                     final int count = inserted;
                     final int read = messages.size();
+                    final boolean hasMore = read >= SCAN_BATCH_LIMIT;
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            toast("Read " + read + " messages, " + count + " new candidates");
+                            String result = "Read " + read + " current-month messages, "
+                                    + count + " new candidates";
+                            if (hasMore) {
+                                result += " — tap Scan again for the next batch";
+                            }
+                            toast(result);
                             renderScreen();
                         }
                     });
@@ -369,6 +390,7 @@ public final class MainActivity extends Activity {
             toast("Please sign in again");
             return;
         }
+        final long monthStart = startOfCurrentMonthMillis();
         setStatus("Saving confirmed transactions…");
         executor.execute(new Runnable() {
             @Override
@@ -377,7 +399,7 @@ public final class MainActivity extends Activity {
                 int ignored = 0;
                 int failed = 0;
                 String firstError = null;
-                for (Candidate candidate : db.pendingCandidates()) {
+                for (Candidate candidate : db.pendingCandidates(monthStart, Integer.MAX_VALUE)) {
                     try {
                         String date = dateOf(candidate.smsDate);
                         if (candidate.ignored) {
@@ -597,7 +619,18 @@ public final class MainActivity extends Activity {
         String when = last == 0 ? "never"
                 : DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
                 .format(new Date(last));
-        return "Signed in as " + api.getEmail() + "\nLast scan: " + when;
+        return "Signed in as " + api.getEmail() + "\nLast scan: " + when
+                + "\nScans are limited to the current month.";
+    }
+
+    private static long startOfCurrentMonthMillis() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.DAY_OF_MONTH, 1);
+        calendar.set(Calendar.HOUR_OF_DAY, 0);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        return calendar.getTimeInMillis();
     }
 
     private static String dateOf(long timestampMillis) {

@@ -8,9 +8,13 @@ transactions into the same Supabase account.
 - **Manual scan only.** Permission is requested when you tap **Scan SMS**; there is no
   background service, no `RECEIVE_SMS` receiver, and the app never becomes the default
   SMS app.
-- **Foreground read.** Only received messages (`type = 1`) newer than the last successful
-  scan are read. Each message gets a SHA-256 fingerprint of `sender|date|body`, so
-  re-scans cannot create duplicates.
+- **Current month only.** Scans start at midnight on the 1st of the current month; older
+  messages are never read. Each tap reads up to 50 messages in SMS-id order, so tap
+  **Scan SMS** again if the toast says there are more. Older or already-synced messages
+  are not re-imported.
+- **Foreground read.** Only received messages (`type = 1`) are read, and only when you tap
+  the button. Each message gets a SHA-256 fingerprint of `sender|date|body`, so re-scans
+  cannot create duplicates.
 - **On-device parsing.** Amount, direction (expense/income), merchant, category and
   cash/bank account are inferred locally with regex rules. No SMS text is sent to an
   AI service or third party.

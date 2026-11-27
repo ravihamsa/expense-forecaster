@@ -44,6 +44,7 @@ final class CompanionDb extends SQLiteOpenHelper {
     private static final String COL_REMOTE_FLOW_ID = "remote_flow_id";
 
     private static final String LAST_SCAN_KEY = "last_scan_at";
+    private static final String LAST_SCAN_ID_KEY = "last_scan_id";
 
     CompanionDb(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
@@ -92,9 +93,26 @@ final class CompanionDb extends SQLiteOpenHelper {
     // ---------------------------------------------------------------- scan state
 
     long getLastScanAt() {
+        return readScanState(LAST_SCAN_KEY);
+    }
+
+    void setLastScanAt(long timestampMillis) {
+        writeScanState(LAST_SCAN_KEY, timestampMillis);
+    }
+
+    /** SMS provider id cursor. More reliable than a timestamp when many texts share a second. */
+    long getLastScanId() {
+        return readScanState(LAST_SCAN_ID_KEY);
+    }
+
+    void setLastScanId(long smsId) {
+        writeScanState(LAST_SCAN_ID_KEY, smsId);
+    }
+
+    private long readScanState(String key) {
         SQLiteDatabase db = getReadableDatabase();
         Cursor cursor = db.query(TABLE_SCAN_STATE, new String[]{COL_VALUE},
-                COL_KEY + " = ?", new String[]{LAST_SCAN_KEY}, null, null, null);
+                COL_KEY + " = ?", new String[]{key}, null, null, null);
         try {
             return cursor.moveToFirst() ? cursor.getLong(0) : 0L;
         } finally {
@@ -102,10 +120,10 @@ final class CompanionDb extends SQLiteOpenHelper {
         }
     }
 
-    void setLastScanAt(long timestampMillis) {
+    private void writeScanState(String key, long value) {
         ContentValues values = new ContentValues();
-        values.put(COL_KEY, LAST_SCAN_KEY);
-        values.put(COL_VALUE, timestampMillis);
+        values.put(COL_KEY, key);
+        values.put(COL_VALUE, value);
         getWritableDatabase().insertWithOnConflict(TABLE_SCAN_STATE, null, values,
                 SQLiteDatabase.CONFLICT_REPLACE);
     }
@@ -186,10 +204,14 @@ final class CompanionDb extends SQLiteOpenHelper {
                 COL_FINGERPRINT + " = ?", new String[]{fingerprint});
     }
 
-    List<Candidate> pendingCandidates() {
+    /** Unsynced candidates from {@code sinceMillis} onward, oldest first. */
+    List<Candidate> pendingCandidates(long sinceMillis, int limit) {
         SQLiteDatabase db = getReadableDatabase();
-        Cursor cursor = db.query(TABLE_SMS_EVENTS, null, COL_SYNCED + " = 0", null,
-                null, null, COL_SMS_DATE + " ASC");
+        String limitValue = limit > 0 ? String.valueOf(limit) : null;
+        Cursor cursor = db.query(TABLE_SMS_EVENTS, null,
+                COL_SYNCED + " = 0 AND " + COL_SMS_DATE + " >= ?",
+                new String[]{String.valueOf(sinceMillis)}, null, null,
+                COL_SMS_DATE + " ASC", limitValue);
         List<Candidate> result = new ArrayList<>();
         try {
             while (cursor.moveToNext()) {
@@ -199,6 +221,18 @@ final class CompanionDb extends SQLiteOpenHelper {
             cursor.close();
         }
         return result;
+    }
+
+    int countPending(long sinceMillis) {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor cursor = db.query(TABLE_SMS_EVENTS, new String[]{COL_FINGERPRINT},
+                COL_SYNCED + " = 0 AND " + COL_SMS_DATE + " >= ?",
+                new String[]{String.valueOf(sinceMillis)}, null, null, null);
+        try {
+            return cursor.getCount();
+        } finally {
+            cursor.close();
+        }
     }
 
     int countSynced() {

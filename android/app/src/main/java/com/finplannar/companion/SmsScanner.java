@@ -21,8 +21,8 @@ final class SmsScanner {
     private static final String[] PROJECTION = {
             BaseColumns._ID, "address", "date", "body", "type"
     };
-    private static final String SELECTION = "type = 1 AND date > ?";
-    private static final String SORT_ORDER = "date ASC";
+    private static final String SELECTION = "type = 1 AND date >= ? AND " + BaseColumns._ID + " > ?";
+    private static final String SORT_ORDER = BaseColumns._ID + " ASC";
 
     private final ContentResolver resolver;
 
@@ -30,11 +30,17 @@ final class SmsScanner {
         this.resolver = resolver;
     }
 
-    /** Returns received messages newer than {@code afterMillis}, oldest first. */
-    List<SmsItem> scanSince(long afterMillis) {
+    /**
+     * Returns at most {@code limit} received messages from {@code fromMillisInclusive}
+     * onward, after the saved SMS id, oldest first. The id cursor makes batching safe
+     * even when several messages share the same timestamp.
+     */
+    List<SmsItem> scanSince(long fromMillisInclusive, long afterId, int limit) {
         List<SmsItem> items = new ArrayList<>();
+        int maxItems = limit > 0 ? limit : 50;
         Cursor cursor = resolver.query(INBOX_URI, PROJECTION, SELECTION,
-                new String[]{String.valueOf(afterMillis)}, SORT_ORDER);
+                new String[]{String.valueOf(fromMillisInclusive), String.valueOf(afterId)},
+                SORT_ORDER);
         if (cursor == null) {
             return items;
         }
@@ -45,7 +51,7 @@ final class SmsScanner {
             int bodyIndex = cursor.getColumnIndexOrThrow("body");
             int typeIndex = cursor.getColumnIndexOrThrow("type");
 
-            while (cursor.moveToNext()) {
+            while (cursor.moveToNext() && items.size() < maxItems) {
                 String sender = cursor.isNull(addressIndex) ? "" : cursor.getString(addressIndex);
                 String body = cursor.isNull(bodyIndex) ? "" : cursor.getString(bodyIndex);
                 items.add(new SmsItem(

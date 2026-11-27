@@ -129,8 +129,8 @@ The [`android/`](android/) folder is a separate Java Android app that imports tr
 same planner. It is **manual and foreground-only**: nothing watches SMS in the background.
 
 1. Tap **Scan SMS**. The app asks for `READ_SMS` permission only at that point.
-2. It reads received messages newer than the last successful scan, parses them on the device, and
-   shows each as an editable suggestion.
+2. It reads received messages from the **current month only** (50 per tap), parses them on the
+   device, and shows each as an editable suggestion.
 3. Mark each message **Expense**, **Income**, or **Ignore**. Vendor, category, and account are
    pre-filled from learned rules and can be edited.
 4. Tap **Save selected**. Confirmed messages become one-time cash flows plus matching actuals, so
