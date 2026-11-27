@@ -2,6 +2,20 @@ import type { AppData, Budget, BudgetPeriod, FlowEvent, MonthProjection } from '
 
 const LEGACY_START_DATE = '1970-01-01'
 
+/** One expense occurrence that feeds a budget month's spent amount. */
+export interface BudgetExpense {
+  id: string
+  name: string
+  date: string
+  planned: number
+  recorded?: number
+  /** Amount that actually counted toward this budget month. */
+  counted: number
+  accountLabel: string
+  note: string
+  source: string
+}
+
 export interface BudgetMonthStatus {
   key: string
   label: string
@@ -14,6 +28,8 @@ export interface BudgetMonthStatus {
   remaining: number
   /** Whether this allocation applies to this projection month. */
   active: boolean
+  /** Expense occurrences behind the spent amount, largest contributors first. */
+  expenses: BudgetExpense[]
 }
 
 export interface BudgetStatus {
@@ -83,6 +99,7 @@ function yearlyCycleStartYear(startDate: string, month: MonthProjection): number
  */
 export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): BudgetStatus[] {
   const actuals = new Map((data.actuals ?? []).map((actual) => [actual.event_key, actual]))
+  const accountNames = new Map((data.accounts ?? []).map((account) => [account.id, account.name]))
 
   return (data.budgets ?? []).map((budget) => {
     const period = budgetPeriod(budget)
@@ -134,6 +151,30 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
         }
       }
 
+      const expenses: BudgetExpense[] = events
+        .map((event) => {
+          const actual = actuals.get(event.id)
+          const recordedValue = actual?.amount
+          const counted = period === 'monthly'
+            ? recordedValue ?? event.amount
+            : active
+              ? recordedValue ?? 0
+              : 0
+          return {
+            id: event.id,
+            name: event.name,
+            date: event.date,
+            planned: event.amount,
+            recorded: recordedValue,
+            counted,
+            accountLabel: event.account ? accountNames.get(event.account) ?? event.account : '',
+            note: actual?.note ?? '',
+            source: actual ? (actual.source === 'sms' ? 'SMS import' : 'Actual') : 'Planned',
+          }
+        })
+        .filter((item) => item.counted > 0)
+        .sort((a, b) => b.counted - a.counted || a.date.localeCompare(b.date) || a.name.localeCompare(b.name))
+
       plannedTotal += planned
       recordedTotal += recorded
       spentTotal += spent
@@ -148,6 +189,7 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
         available,
         remaining,
         active,
+        expenses,
       }
     })
 

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Pencil, Plus, Repeat, Trash2, Wallet } from 'lucide-react'
 import Modal from '../components/Modal'
 import { budgetPeriodLabel, budgetTitle, buildBudgetStatuses } from '../lib/budgets'
+import type { BudgetExpense } from '../lib/budgets'
 import { categoriesOfKind } from '../lib/categories'
 import { formatDate, formatMoney, formatSigned } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
@@ -26,6 +27,35 @@ function blankBudget(categories: string[] = ['Other']): NewBudget {
     period: 'monthly',
     start_date: toDateInputValue(),
   }
+}
+
+function ExpenseBreakdown({ expenses, currency }: { expenses: BudgetExpense[]; currency: string }) {
+  if (expenses.length === 0) {
+    return <p className="budget-expense-empty">No individual expenses were linked to this over-limit month.</p>
+  }
+  return (
+    <div className="budget-expense-list">
+      {expenses.map((expense) => (
+        <div className="budget-expense-row" key={expense.id}>
+          <div className="budget-expense-main">
+            <strong>{expense.name}</strong>
+            <span>
+              {formatDate(expense.date)}
+              {expense.accountLabel ? ` · ${expense.accountLabel}` : ''}
+              {expense.note ? ` · ${expense.note}` : ''}
+            </span>
+          </div>
+          <span className="budget-expense-tag">
+            {expense.source}
+            {expense.recorded !== undefined && expense.recorded !== expense.planned
+              ? ` · planned ${formatMoney(expense.planned, currency)}`
+              : ''}
+          </span>
+          <strong className="budget-expense-amount">{formatMoney(expense.counted, currency)}</strong>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function Budgets({ data, actions, simulation, currency, onNotify }: Props) {
@@ -201,14 +231,24 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                         <span>Month</span><span>Planned</span><span>Recorded</span><span>Carried in</span><span>Available</span><span>Spent</span><span>Remaining</span>
                       </div>
                       {status.months.map((row) => (
-                        <div className="mini-table-row" key={row.key}>
-                          <span>{row.label}{row.active ? '' : ' ·'}</span>
-                          <span>{formatMoney(row.planned, currency)}</span>
-                          <span>{formatMoney(row.recorded, currency)}</span>
-                          <span>{formatMoney(row.carriedIn, currency)}</span>
-                          <span>{formatMoney(row.available, currency)}</span>
-                          <span>{formatMoney(row.spent, currency)}</span>
-                          <span className={row.remaining < 0 ? 'negative' : ''}>{formatSigned(row.remaining, currency)}</span>
+                        <div className="budget-month-group" key={row.key}>
+                          <div className="mini-table-row">
+                            <span>{row.label}{row.active ? '' : ' ·'}</span>
+                            <span>{formatMoney(row.planned, currency)}</span>
+                            <span>{formatMoney(row.recorded, currency)}</span>
+                            <span>{formatMoney(row.carriedIn, currency)}</span>
+                            <span>{formatMoney(row.available, currency)}</span>
+                            <span>{formatMoney(row.spent, currency)}</span>
+                            <span className={row.remaining < 0 ? 'negative' : ''}>{formatSigned(row.remaining, currency)}</span>
+                          </div>
+                          {row.remaining < 0 && (
+                            <div className="budget-month-detail">
+                              <span className="budget-expense-label">
+                                Caused by · {formatMoney(Math.abs(row.remaining), currency)} over limit
+                              </span>
+                              <ExpenseBreakdown expenses={row.expenses} currency={currency} />
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
