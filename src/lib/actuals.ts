@@ -9,6 +9,7 @@ export function actualFromEvent(event: FlowEvent, note = ''): NewActual {
     category: event.category,
     kind: event.kind,
     amount: Math.max(0, event.actualAmount ?? event.amount),
+    account: event.account,
     note,
   }
 }

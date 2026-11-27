@@ -269,6 +269,7 @@ export default function Loans({ data, actions, onNotify, onPayFaster }: Props) {
           <LoanForm
             initial={modal.loan}
             defaultDirection={modal.direction}
+            accounts={data.accounts}
             currency={currency}
             onCancel={() => setModal(null)}
             onSave={handleSave}
@@ -286,6 +287,8 @@ export default function Loans({ data, actions, onNotify, onPayFaster }: Props) {
             loanId={paymentModal.id}
             loanName={paymentModal.name}
             direction={paymentModal.direction}
+            accounts={data.accounts}
+            defaultAccount={paymentModal.account}
             currency={currency}
             onCancel={() => setPaymentModal(null)}
             onSave={handlePaymentSave}

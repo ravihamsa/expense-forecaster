@@ -51,6 +51,8 @@ function downloadJson(filename: string, payload: DataExport): void {
 function exportCounts(payload: DataExport): { label: string; value: number }[] {
   const source = payload.data
   return [
+    { label: 'Accounts', value: source.accounts?.length ?? 0 },
+    { label: 'Transfers', value: source.transfers?.length ?? 0 },
     { label: 'Cash flows', value: source.cashFlows.length },
     { label: 'Income plans', value: source.monthlyIncomes.length },
     { label: 'Budgets', value: source.budgets.length },
@@ -85,7 +87,10 @@ export default function Settings({ data, actions, user, onNotify }: Props) {
   const [importSuccess, setImportSuccess] = useState('')
   const demoAccounts = useMemo(() => listLocalDemoAccounts().filter((account) => account.hasData), [])
 
-  const startingBalance = (Number(cashInHand) || 0) + (Number(bankBalance) || 0)
+  const otherAccountsTotal = (data.accounts ?? [])
+    .filter((account) => account.id !== 'cash' && account.id !== 'bank')
+    .reduce((sum, account) => sum + account.opening_balance, 0)
+  const startingBalance = (Number(cashInHand) || 0) + (Number(bankBalance) || 0) + otherAccountsTotal
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -97,7 +102,7 @@ export default function Settings({ data, actions, user, onNotify }: Props) {
       currency,
       cash_in_hand: cash,
       bank_balance: bank,
-      opening_balance: cash + bank,
+      opening_balance: startingBalance,
       horizon_months: Math.max(1, Math.min(36, Number(horizon) || 12)),
       income_growth_pct: Number(growth) || 0,
       expense_inflation_pct: Number(inflation) || 0,
@@ -217,7 +222,7 @@ export default function Settings({ data, actions, user, onNotify }: Props) {
               <strong>{formatMoney(startingBalance, currency)}</strong>
             </div>
           </div>
-          <p className="helper-text">Your forecast begins with cash in hand plus your bank balance. Update them whenever you want to re-plan from a new starting point.</p>
+          <p className="helper-text">Your forecast begins with the opening balance of every account — cash, bank, and any custom funds. Edit cash and bank here; manage other accounts on the Accounts page.</p>
 
           <div className="section-divider" />
           <h3 className="subhead">Forecast assumptions</h3>
@@ -265,7 +270,7 @@ export default function Settings({ data, actions, user, onNotify }: Props) {
           <section className="card info-card">
             <div className="card-head"><div><h2>How forecasting works</h2></div></div>
             <ul className="bullet-list">
-              <li>Your plan starts from cash in hand plus bank balance, then adds each month's projected net.</li>
+              <li>Your plan starts from the opening balance of every account, then adds each month's projected net.</li>
               <li>Recurring items repeat from their start date; one-time items appear only in their chosen month.</li>
               <li>Loan EMIs are deducted monthly and interest is recalculated on the outstanding balance.</li>
               <li>One-time loans (including money you lent) can have several lump-sum payments on different dates; repayments received count as income.</li>

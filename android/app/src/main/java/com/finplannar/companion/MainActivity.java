@@ -22,6 +22,9 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -31,6 +34,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -45,7 +49,16 @@ public final class MainActivity extends Activity {
     private static final int SCAN_BATCH_LIMIT = 50;
     private static final int CSV_BATCH_LIMIT = 100;
     private static final int VISIBLE_CANDIDATE_LIMIT = 20;
-    private static final String[] ACCOUNTS = {"cash", "bank"};
+
+    private static final class AccountOption {
+        final String id;
+        final String name;
+
+        AccountOption(String id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+    }
 
     private CompanionDb db;
     private SupabaseApi api;
@@ -53,6 +66,7 @@ public final class MainActivity extends Activity {
     private LinearLayout content;
     private TextView statusView;
     private TextView summaryView;
+    private final List<AccountOption> accountOptions = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,6 +74,8 @@ public final class MainActivity extends Activity {
         db = new CompanionDb(this);
         api = new SupabaseApi(this);
         executor = Executors.newSingleThreadExecutor();
+        accountOptions.add(new AccountOption("cash", "Cash in hand"));
+        accountOptions.add(new AccountOption("bank", "Bank balance"));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -72,6 +88,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         renderScreen();
+        loadAccounts();
     }
 
     @Override
@@ -130,6 +147,7 @@ public final class MainActivity extends Activity {
                                 @Override
                                 public void run() {
                                     renderScreen();
+                                    loadAccounts();
                                 }
                             });
                         } catch (final Exception error) {
@@ -693,22 +711,74 @@ public final class MainActivity extends Activity {
         return view;
     }
 
+    /** Pull the user's accounts from Supabase so custom funds appear in review cards. */
+    private void loadAccounts() {
+        if (!api.isSignedIn()) return;
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    JSONArray rows = api.fetchAccounts(api.getUserId());
+                    final List<AccountOption> loaded = new ArrayList<AccountOption>();
+                    for (int index = 0; index < rows.length(); index += 1) {
+                        JSONObject row = rows.getJSONObject(index);
+                        String id = row.optString("id", "");
+                        if (id.isEmpty()) continue;
+                        loaded.add(new AccountOption(id, row.optString("name", id)));
+                    }
+                    if (loaded.isEmpty()) return;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            accountOptions.clear();
+                            accountOptions.addAll(loaded);
+                            renderScreen();
+                        }
+                    });
+                } catch (Exception error) {
+                    // Offline or no accounts table yet: keep cash/bank defaults.
+                }
+            }
+        });
+    }
+
+    private String accountLabel(String id) {
+        for (AccountOption option : accountOptions) {
+            if (option.id.equals(id)) return option.name;
+        }
+        return id;
+    }
+
+    private void ensureAccountOption(String id) {
+        if (id == null || id.isEmpty()) return;
+        for (AccountOption option : accountOptions) {
+            if (option.id.equals(id)) return;
+        }
+        accountOptions.add(new AccountOption(id, id));
+    }
+
     private Spinner accountSpinner(String selected) {
+        ensureAccountOption(selected);
+        final List<String> ids = new ArrayList<String>();
+        for (AccountOption option : accountOptions) ids.add(option.id);
+
         Spinner view = new Spinner(this);
         ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
-                android.R.layout.simple_list_item_1, ACCOUNTS) {
+                android.R.layout.simple_list_item_1, ids) {
             @Override
             public View getView(int position, View convertView, ViewGroup parent) {
-                return accountTextView(getItem(position));
+                return accountTextView(accountLabel(getItem(position)));
             }
 
             @Override
             public View getDropDownView(int position, View convertView, ViewGroup parent) {
-                return accountTextView(getItem(position));
+                return accountTextView(accountLabel(getItem(position)));
             }
         };
         view.setAdapter(adapter);
-        view.setSelection("cash".equals(selected) ? 0 : 1);
+        int selection = ids.indexOf(selected);
+        if (selection < 0) selection = ids.indexOf("bank");
+        view.setSelection(Math.max(0, selection));
         return withTopMargin(view, dp(8));
     }
 

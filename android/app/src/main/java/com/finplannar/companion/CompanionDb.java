@@ -185,7 +185,7 @@ final class CompanionDb extends SQLiteOpenHelper {
         values.put(COL_AMOUNT, Math.abs(amount));
         values.put(COL_NAME, safeText(name, "SMS import"));
         values.put(COL_CATEGORY, safeText(category, "Other"));
-        values.put(COL_ACCOUNT, "cash".equals(account) ? "cash" : "bank");
+        values.put(COL_ACCOUNT, safeText(account, "bank"));
         values.put(COL_KIND, "income".equals(kind) ? "income" : "expense");
         values.put(COL_IGNORED, 0);
         values.put(COL_REVIEWED, 1);

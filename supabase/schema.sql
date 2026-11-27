@@ -263,7 +263,7 @@ create table if not exists public.vendor_rules (
   vendor_name text not null default '',
   kind text not null check (kind in ('income', 'expense')),
   category text not null default 'Other',
-  account text not null default 'bank' check (account in ('cash', 'bank')),
+  account text not null default 'bank',
   auto_apply boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -392,27 +392,93 @@ create table if not exists public.loan_payments (
 
 alter table public.loan_payments add column if not exists applied_to_balance boolean not null default false;
 
--- Every money movement names the liquid account it passes through.
+-- Every money movement names the account it passes through. Account ids are
+-- user-defined (see public.accounts), so the old two-value checks are removed.
 alter table public.cash_flows add column if not exists account text not null default 'bank';
 alter table public.loans add column if not exists account text not null default 'bank';
 alter table public.loan_payments add column if not exists account text not null default 'bank';
-do $$
-begin
-  if not exists (select 1 from pg_constraint where conname = 'cash_flows_account_check') then
-    alter table public.cash_flows add constraint cash_flows_account_check check (account in ('cash', 'bank'));
-  end if;
-  if not exists (select 1 from pg_constraint where conname = 'loans_account_check') then
-    alter table public.loans add constraint loans_account_check check (account in ('cash', 'bank'));
-  end if;
-  if not exists (select 1 from pg_constraint where conname = 'loan_payments_account_check') then
-    alter table public.loan_payments add constraint loan_payments_account_check check (account in ('cash', 'bank'));
-  end if;
-end $$;
+alter table public.cash_flows drop constraint if exists cash_flows_account_check;
+alter table public.loans drop constraint if exists loans_account_check;
+alter table public.loan_payments drop constraint if exists loan_payments_account_check;
+alter table public.vendor_rules drop constraint if exists vendor_rules_account_check;
 
 create index if not exists cash_flows_user_idx on public.cash_flows(user_id);
 create index if not exists loans_user_idx on public.loans(user_id);
 create index if not exists loan_payments_user_idx on public.loan_payments(user_id);
 create index if not exists loan_payments_loan_idx on public.loan_payments(loan_id);
+
+-- ---------------------------------------------------------------------------
+-- Multiple money accounts + net-neutral transfers
+-- ---------------------------------------------------------------------------
+
+-- User-defined buckets. 'cash' and 'bank' are seeded for every profile; custom
+-- accounts (e.g. a farm-house build fund) get generated ids.
+create table if not exists public.accounts (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  id text not null,
+  name text not null default '',
+  kind text not null default 'other' check (kind in ('cash', 'bank', 'other')),
+  opening_balance numeric(14, 2) not null default 0 check (opening_balance >= 0),
+  created_at timestamptz not null default now(),
+  primary key (user_id, id)
+);
+
+create table if not exists public.transfers (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  from_account text not null,
+  to_account text not null,
+  amount numeric(14, 2) not null check (amount > 0),
+  date date not null,
+  note text not null default '',
+  created_at timestamptz not null default now(),
+  check (from_account <> to_account)
+);
+
+-- Recorded amounts remember which account actually paid/received them.
+alter table public.actuals add column if not exists account text not null default 'bank';
+
+create index if not exists accounts_user_idx on public.accounts(user_id);
+create index if not exists transfers_user_idx on public.transfers(user_id);
+create index if not exists transfers_date_idx on public.transfers(date);
+
+alter table public.accounts enable row level security;
+drop policy if exists "accounts_select_own" on public.accounts;
+drop policy if exists "accounts_insert_own" on public.accounts;
+drop policy if exists "accounts_update_own" on public.accounts;
+drop policy if exists "accounts_delete_own" on public.accounts;
+create policy "accounts_select_own" on public.accounts
+  for select to authenticated using (auth.uid() = user_id);
+create policy "accounts_insert_own" on public.accounts
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy "accounts_update_own" on public.accounts
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "accounts_delete_own" on public.accounts
+  for delete to authenticated using (auth.uid() = user_id);
+
+alter table public.transfers enable row level security;
+drop policy if exists "transfers_select_own" on public.transfers;
+drop policy if exists "transfers_insert_own" on public.transfers;
+drop policy if exists "transfers_update_own" on public.transfers;
+drop policy if exists "transfers_delete_own" on public.transfers;
+create policy "transfers_select_own" on public.transfers
+  for select to authenticated using (auth.uid() = user_id);
+create policy "transfers_insert_own" on public.transfers
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy "transfers_update_own" on public.transfers
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "transfers_delete_own" on public.transfers
+  for delete to authenticated using (auth.uid() = user_id);
+
+-- Existing profiles keep their current starting amounts as the built-in rows.
+insert into public.accounts (user_id, id, name, kind, opening_balance)
+select p.user_id, 'cash', 'Cash in hand', 'cash', p.cash_in_hand
+from public.profiles p
+on conflict (user_id, id) do nothing;
+insert into public.accounts (user_id, id, name, kind, opening_balance)
+select p.user_id, 'bank', 'Bank balance', 'bank', p.bank_balance
+from public.profiles p
+on conflict (user_id, id) do nothing;
 
 -- ---------------------------------------------------------------------------
 -- Row level security — each user sees only their own data
@@ -476,7 +542,7 @@ create policy "loan_payments_update_own" on public.loan_payments
 create policy "loan_payments_delete_own" on public.loan_payments
   for delete to authenticated using (auth.uid() = user_id);
 
-grant select, insert, update, delete on public.profiles, public.monthly_incomes, public.cash_flows, public.cash_flow_overrides, public.cash_flow_moves, public.cash_flow_skips, public.budgets, public.goals, public.vendor_rules, public.actuals, public.loans, public.loan_payments to authenticated;
+grant select, insert, update, delete on public.profiles, public.monthly_incomes, public.cash_flows, public.cash_flow_overrides, public.cash_flow_moves, public.cash_flow_skips, public.budgets, public.goals, public.vendor_rules, public.actuals, public.loans, public.loan_payments, public.accounts, public.transfers to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Create a profile automatically when a new user signs up
@@ -495,6 +561,11 @@ begin
     coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1))
   )
   on conflict (user_id) do nothing;
+  insert into public.accounts (user_id, id, name, kind, opening_balance)
+  values
+    (new.id, 'cash', 'Cash in hand', 'cash', 0),
+    (new.id, 'bank', 'Bank balance', 'bank', 0)
+  on conflict (user_id, id) do nothing;
   return new;
 end;
 $$;

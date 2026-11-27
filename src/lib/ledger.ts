@@ -12,9 +12,9 @@ export interface AccountTotal {
 }
 
 export interface LedgerRow extends LedgerEntry {
-  /** Effect on cash + bank for this entry. */
+  /** Effect on the sum of all your money accounts for this entry. */
   cashImpact: number
-  /** Running cash + bank balance after this entry. */
+  /** Running combined balance of every money account after this entry. */
   runningBalance: number
 }
 
@@ -27,6 +27,8 @@ export interface LedgerSummary {
   cashBalance: number
   bankBalance: number
   liquidBalance: number
+  /** Closing balance of every money account, including custom ones. */
+  accountBalances: Record<string, number>
   bySource: AccountTotal[]
   byDestination: AccountTotal[]
 }
@@ -41,12 +43,19 @@ function previousDate(value: string): string {
   return dateKey(date)
 }
 
-function isLiquid(account: string): account is MoneyAccount {
-  return account === CASH_ACCOUNT || account === BANK_ACCOUNT
+/** Ids of the real money buckets (built-in and custom), not pseudo-accounts. */
+function moneyAccountIds(data: AppData): Set<string> {
+  const ids = new Set((data.accounts ?? []).map((account) => account.id))
+  if (!ids.size) {
+    ids.add(CASH_ACCOUNT)
+    ids.add(BANK_ACCOUNT)
+  }
+  return ids
 }
 
+/** Preserve any custom account id; only missing values fall back to bank. */
 export function moneyAccount(value: MoneyAccount | undefined): MoneyAccount {
-  return value === 'cash' ? 'cash' : 'bank'
+  return value || BANK_ACCOUNT
 }
 
 export function incomeAccount(category: string): string {
@@ -66,6 +75,8 @@ export function receivableAccount(id: string): string {
 }
 
 export function accountLabel(account: string, data: AppData): string {
+  const custom = data.accounts?.find((entry) => entry.id === account)
+  if (custom) return custom.name
   if (account === CASH_ACCOUNT) return 'Cash in hand'
   if (account === BANK_ACCOUNT) return 'Bank balance'
   if (account === OPENING_ACCOUNT) return 'Opening balance'
@@ -76,6 +87,7 @@ export function accountLabel(account: string, data: AppData): string {
     const name = data.loans.find((loan) => loan.id === value)?.name ?? 'Receivable'
     return `${name} (owed to you)`
   }
+  if (prefix === 'income' || prefix === 'expense') return `${prefix === 'income' ? 'Income' : 'Expense'} · ${value}`
   return value || prefix
 }
 
@@ -179,30 +191,42 @@ export function buildLedger(data: AppData, from = new Date()): LedgerEntry[] {
     })
   }
 
+  // Net-neutral transfers are real account movements, so they belong in the
+  // trail even though they are neither income nor expense.
+  for (const transfer of data.transfers ?? []) {
+    if (!transfer.date || transfer.date > today) continue
+    const amount = Math.max(0, Number(transfer.amount) || 0)
+    if (amount <= 0 || transfer.from_account === transfer.to_account) continue
+    entries.push({
+      id: `transfer-${transfer.id}`,
+      date: transfer.date,
+      description: transfer.note ? `Transfer · ${transfer.note}` : 'Transfer between accounts',
+      from: transfer.from_account,
+      to: transfer.to_account,
+      amount,
+      kind: 'transfer',
+    })
+  }
+
   entries.sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))
 
   const openingDate = previousDate(entries[0]?.date ?? today)
-  const cash = Math.max(0, Number(data.profile.cash_in_hand) || 0)
-  const bank = Math.max(0, Number(data.profile.bank_balance) || 0)
-  if (cash > 0) {
+  const accounts = (data.accounts ?? []).length
+    ? data.accounts ?? []
+    : [
+        { id: CASH_ACCOUNT, name: 'Cash in hand', kind: 'cash' as const, opening_balance: data.profile.cash_in_hand || 0, user_id: '' },
+        { id: BANK_ACCOUNT, name: 'Bank balance', kind: 'bank' as const, opening_balance: data.profile.bank_balance || 0, user_id: '' },
+      ]
+  for (const account of accounts) {
+    const amount = Math.max(0, Number(account.opening_balance) || 0)
+    if (amount <= 0) continue
     entries.unshift({
-      id: 'opening-cash',
+      id: `opening-${account.id}`,
       date: openingDate,
-      description: 'Opening cash in hand',
+      description: `Opening ${accountLabel(account.id, data)}`,
       from: OPENING_ACCOUNT,
-      to: CASH_ACCOUNT,
-      amount: cash,
-      kind: 'opening',
-    })
-  }
-  if (bank > 0) {
-    entries.unshift({
-      id: 'opening-bank',
-      date: openingDate,
-      description: 'Opening bank balance',
-      from: OPENING_ACCOUNT,
-      to: BANK_ACCOUNT,
-      amount: bank,
+      to: account.id,
+      amount,
       kind: 'opening',
     })
   }
@@ -218,8 +242,9 @@ function accountTotals(map: Map<string, number>, data: AppData): AccountTotal[] 
 }
 
 export function summarizeLedger(entries: LedgerEntry[], data: AppData): LedgerSummary {
-  let cash = 0
-  let bank = 0
+  const accountIds = moneyAccountIds(data)
+  const balances = new Map<string, number>()
+  accountIds.forEach((id) => balances.set(id, 0))
   let openingBalance = 0
   let totalIn = 0
   let totalOut = 0
@@ -227,36 +252,38 @@ export function summarizeLedger(entries: LedgerEntry[], data: AppData): LedgerSu
   const destinations = new Map<string, number>()
 
   const rows = entries.map((entry) => {
-    let cashImpact = 0
-    if (entry.to === CASH_ACCOUNT) {
-      cash += entry.amount
-      cashImpact += entry.amount
+    const fromOwn = accountIds.has(entry.from)
+    const toOwn = accountIds.has(entry.to)
+    let impact = 0
+    if (toOwn) {
+      balances.set(entry.to, (balances.get(entry.to) ?? 0) + entry.amount)
+      impact += entry.amount
     }
-    if (entry.from === CASH_ACCOUNT) {
-      cash -= entry.amount
-      cashImpact -= entry.amount
-    }
-    if (entry.to === BANK_ACCOUNT) {
-      bank += entry.amount
-      cashImpact += entry.amount
-    }
-    if (entry.from === BANK_ACCOUNT) {
-      bank -= entry.amount
-      cashImpact -= entry.amount
+    if (fromOwn) {
+      balances.set(entry.from, (balances.get(entry.from) ?? 0) - entry.amount)
+      impact -= entry.amount
     }
 
-    if (entry.kind === 'opening') openingBalance += cashImpact
-    else if (cashImpact >= 0) totalIn += cashImpact
-    else totalOut += -cashImpact
+    if (entry.kind === 'opening') openingBalance += impact
+    else if (entry.kind !== 'transfer') {
+      if (impact >= 0) totalIn += impact
+      else totalOut += -impact
+    }
 
-    if (isLiquid(entry.to) && !isLiquid(entry.from)) {
+    if (toOwn && !fromOwn) {
       sources.set(entry.from, (sources.get(entry.from) ?? 0) + entry.amount)
     }
-    if (isLiquid(entry.from) && !isLiquid(entry.to)) {
+    if (fromOwn && !toOwn) {
       destinations.set(entry.to, (destinations.get(entry.to) ?? 0) + entry.amount)
     }
 
-    return { ...entry, cashImpact, runningBalance: cash + bank }
+    const liquidBalance = [...balances.values()].reduce((sum, value) => sum + value, 0)
+    return { ...entry, cashImpact: impact, runningBalance: liquidBalance }
+  })
+
+  const accountBalances: Record<string, number> = {}
+  balances.forEach((balance, id) => {
+    accountBalances[id] = balance
   })
 
   return {
@@ -265,9 +292,10 @@ export function summarizeLedger(entries: LedgerEntry[], data: AppData): LedgerSu
     totalIn,
     totalOut,
     net: totalIn - totalOut,
-    cashBalance: cash,
-    bankBalance: bank,
-    liquidBalance: cash + bank,
+    cashBalance: balances.get(CASH_ACCOUNT) ?? 0,
+    bankBalance: balances.get(BANK_ACCOUNT) ?? 0,
+    liquidBalance: Object.values(accountBalances).reduce((sum, value) => sum + value, 0),
+    accountBalances,
     bySource: accountTotals(sources, data),
     byDestination: accountTotals(destinations, data),
   }

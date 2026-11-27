@@ -137,6 +137,8 @@ export function loanTotalInterest(loan: Loan, extraMonthly = 0, payments: LoanPa
 export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPTIONS, from = new Date()): Simulation {
   const {
     profile,
+    accounts = [],
+    transfers = [],
     cashFlows = [],
     cashFlowOverrides = [],
     cashFlowMoves = [],
@@ -174,6 +176,28 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
   const balances = new Map<string, number>()
   loans.forEach((loan) => balances.set(loan.id, Math.max(0, loan.outstanding)))
 
+  // Every money account carries its own running balance. The aggregate numbers
+  // are the sum of these buckets, so adding an account never double-counts.
+  const accountBalances: Record<string, number> = {}
+  accounts.forEach((account) => {
+    accountBalances[account.id] = Math.max(0, Number(account.opening_balance) || 0)
+  })
+  if (accounts.length === 0) accountBalances.bank = Math.max(0, profile.opening_balance || 0)
+  if (accountBalances.bank === undefined) accountBalances.bank = 0
+  if (accountBalances.cash === undefined) accountBalances.cash = 0
+  const openingTotal = Object.values(accountBalances).reduce((sum, value) => sum + value, 0)
+
+  const transfersByMonth = new Map<number, { from: string; to: string; amount: number }[]>()
+  transfers.forEach((transfer) => {
+    const amount = Math.max(0, Number(transfer.amount) || 0)
+    if (amount <= 0 || transfer.from_account === transfer.to_account) return
+    const offset = monthOffset(transfer.date, from)
+    if (!Number.isInteger(offset) || offset < 0 || offset >= horizon) return
+    const list = transfersByMonth.get(offset) ?? []
+    list.push({ from: transfer.from_account, to: transfer.to_account, amount })
+    transfersByMonth.set(offset, list)
+  })
+
   const paymentsByLoan = new Map<string, LoanPayment[]>()
   loanPayments
     .filter((payment) => payment.payment_date >= today || payment.applied_to_balance)
@@ -184,7 +208,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     })
 
   const months: MonthProjection[] = []
-  let runningBalance = profile.opening_balance || 0
+  let runningBalance = openingTotal
   let totalIncome = 0
   let totalExpenses = 0
   let totalLoanPayments = 0
@@ -213,8 +237,17 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     events: FlowEvent[]
     income: number
     expenses: number
+    /** Signed change to each money account in the month the event lands in. */
+    deltas: Record<string, number>
   }
-  const buckets: PlannedBucket[] = Array.from({ length: horizon }, () => ({ events: [], income: 0, expenses: 0 }))
+  const buckets: PlannedBucket[] = Array.from(
+    { length: horizon },
+    () => ({ events: [], income: 0, expenses: 0, deltas: {} }),
+  )
+  const addDelta = (target: Record<string, number>, id: string | undefined, amount: number): void => {
+    const key = id && accountBalances[id] !== undefined ? id : 'bank'
+    target[key] = (target[key] ?? 0) + amount
+  }
 
   for (let i = 0; i < horizon; i += 1) {
     const date = new Date(from.getFullYear(), from.getMonth() + i, 1)
@@ -231,6 +264,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     const incomeEventId = `income-${currentKey}`
     const incomeActual = actualsByKey.get(incomeEventId)
     buckets[i].income += income
+    addDelta(buckets[i].deltas, 'bank', income)
     // Always include this row so expected income can be set even before it exists.
     buckets[i].events.push({
       id: incomeEventId,
@@ -238,6 +272,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
       kind: 'income',
       amount: income,
       category: 'Income',
+      account: 'bank',
       source: 'profile',
       monthlyIncomeId: incomeEntry?.id,
       date: incomeDate,
@@ -270,12 +305,14 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
             : inflated
         const eventId = `${flow.id}-${occurrence.getTime()}`
         const actual = actualsByKey.get(eventId)
+        const eventAccount = flow.account || 'bank'
         buckets[targetIndex].events.push({
           id: eventId,
           name: flow.name,
           kind: flow.kind,
           amount,
           category: flow.category,
+          account: eventAccount,
           source: 'cash_flow',
           cashFlowId: flow.id,
           date: targetDate,
@@ -288,8 +325,13 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
           actualAmount: actual?.amount,
           actualId: actual?.id,
         })
-        if (flow.kind === 'income') buckets[targetIndex].income += amount
-        else buckets[targetIndex].expenses += amount
+        if (flow.kind === 'income') {
+          buckets[targetIndex].income += amount
+          addDelta(buckets[targetIndex].deltas, eventAccount, amount)
+        } else {
+          buckets[targetIndex].expenses += amount
+          addDelta(buckets[targetIndex].deltas, eventAccount, -amount)
+        }
       }
     }
   }
@@ -302,6 +344,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     const events: MonthProjection['events'] = [...buckets[i].events]
     let income = buckets[i].income
     let expenses = buckets[i].expenses
+    const deltas: Record<string, number> = { ...buckets[i].deltas }
 
     let loanOutflow = 0
     let loanInflow = 0
@@ -322,15 +365,18 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
         const emi = Math.min(loan.emi, balance)
         balance -= emi
         cashMoved += emi
+        const emiAccount = loan.account || 'bank'
         events.push({
           id: `${loan.id}-emi-${i}`,
           name: isLent ? `${loan.name} repayment received` : `${loan.name} EMI`,
           kind: flowKind,
           amount: emi,
           category: 'Loans',
+          account: emiAccount,
           source: 'loan',
           date: dayInMonth(year, month, loan.due_day),
         })
+        addDelta(deltas, emiAccount, isLent ? emi : -emi)
       }
 
       const scheduledPayments = paymentsByLoan.get(loan.id) ?? []
@@ -345,6 +391,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
           if (amount <= 0) return
           cashMoved += amount
           if (!payment.applied_to_balance) balance -= amount
+          const paymentAccount = payment.account || loan.account || 'bank'
           events.push({
             id: `${loan.id}-payment-${payment.id}-${index}`,
             name: isLent
@@ -353,22 +400,27 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
             kind: flowKind,
             amount,
             category: 'Loans',
+            account: paymentAccount,
             source: 'loan',
             date: payment.payment_date,
           })
+          addDelta(deltas, paymentAccount, isLent ? amount : -amount)
         })
 
       if (loan.repayment_type === 'one_time' && loan.due_date?.slice(0, 7) === currentKey && balance > 0) {
+        const lumpAccount = loan.account || 'bank'
         events.push({
           id: `${loan.id}-lumpsum-${i}`,
           name: isLent ? `${loan.name} repayment received` : `${loan.name} lump-sum repayment`,
           kind: flowKind,
           amount: balance,
           category: 'Loans',
+          account: lumpAccount,
           source: 'loan',
           date: loan.due_date ?? dayInMonth(year, month, 1),
         })
         cashMoved += balance
+        addDelta(deltas, lumpAccount, isLent ? balance : -balance)
         balance = 0
       }
 
@@ -402,23 +454,36 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
         balances.set(loan.id, closing)
         remaining -= pay
         extraPayment += pay
+        const prepayAccount = loan.account || 'bank'
         events.push({
           id: `${loan.id}-extra-${i}`,
           name: `${loan.name} prepayment`,
           kind: 'expense',
           amount: pay,
           category: 'Loans',
+          account: prepayAccount,
           source: 'extra_payment',
           date: dayInMonth(year, month, loan.due_day),
         })
+        addDelta(deltas, prepayAccount, -pay)
         markPaidOff(loan, opening, closing, i, year, month)
       }
     }
 
+    // Transfers are net-neutral: they only move money between account buckets.
+    ;(transfersByMonth.get(i) ?? []).forEach((transfer) => {
+      addDelta(deltas, transfer.from, -transfer.amount)
+      addDelta(deltas, transfer.to, transfer.amount)
+    })
+    Object.entries(deltas).forEach(([id, delta]) => {
+      accountBalances[id] = (accountBalances[id] ?? 0) + delta
+    })
+
     const net = income + loanInflow - expenses - loanOutflow - extraPayment
     const openingBalance = runningBalance
-    const closingBalance = openingBalance + net
+    const closingBalance = Object.values(accountBalances).reduce((sum, value) => sum + value, 0)
     runningBalance = closingBalance
+    const monthAccountBalances = { ...accountBalances }
 
     const loanBalances: Record<string, number> = {}
     balances.forEach((balance, id) => {
@@ -438,7 +503,8 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
       net,
       openingBalance,
       closingBalance,
-      cumulativeNet: closingBalance - (profile.opening_balance || 0),
+      accountBalances: monthAccountBalances,
+      cumulativeNet: closingBalance - openingTotal,
       events,
       activeLoans: activeLoans.length,
       loanBalances,
@@ -473,6 +539,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     totalDeficit,
     endingBalance: runningBalance,
     lowestBalance,
+    accountBalances: { ...accountBalances },
     payoff: Array.from(payoffMap.values()).sort((a, b) => a.monthIndex - b.monthIndex),
   }
 }

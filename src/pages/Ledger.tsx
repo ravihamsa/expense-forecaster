@@ -18,6 +18,7 @@ const KIND_LABEL: Record<LedgerEntry['kind'], string> = {
   repayment: 'Loan paid',
   lent: 'Money lent',
   received: 'Money returned',
+  transfer: 'Account transfer',
 }
 
 function dateLabel(value: string): string {
@@ -59,7 +60,7 @@ export default function Ledger({ data }: Props) {
           <div className="kpi-icon kpi-blue"><BookOpen size={19} /></div>
           <span className="kpi-label">Opening balance</span>
           <strong className="kpi-value">{formatMoney(summary.openingBalance, currency)}</strong>
-          <span className="kpi-foot">Cash in hand + bank balance</span>
+          <span className="kpi-foot">Starting balances of all your accounts</span>
         </article>
         <article className="kpi-card">
           <div className="kpi-icon kpi-teal"><ArrowRight size={19} /></div>
@@ -80,7 +81,9 @@ export default function Ledger({ data }: Props) {
             {formatMoney(summary.liquidBalance, currency)}
           </strong>
           <span className="kpi-foot">
-            Cash {formatMoney(summary.cashBalance, currency)} · Bank {formatMoney(summary.bankBalance, currency)}
+            {Object.entries(summary.accountBalances)
+              .map(([id, amount]) => `${accountLabel(id, data)} ${formatMoney(amount, currency)}`)
+              .join(' · ') || 'No accounts yet'}
           </span>
         </article>
       </section>
@@ -90,7 +93,7 @@ export default function Ledger({ data }: Props) {
           <div className="card-head">
             <div>
               <h2>Where money went</h2>
-              <p>Destinations of money that left your cash or bank balance.</p>
+              <p>Destinations of money that left one of your accounts.</p>
             </div>
           </div>
           {summary.byDestination.length ? (
@@ -108,7 +111,7 @@ export default function Ledger({ data }: Props) {
               ))}
             </div>
           ) : (
-            <p className="preview-empty">No money has left your cash or bank balance yet.</p>
+            <p className="preview-empty">No money has left your accounts yet.</p>
           )}
         </section>
 
@@ -116,7 +119,7 @@ export default function Ledger({ data }: Props) {
           <div className="card-head">
             <div>
               <h2>Where money came from</h2>
-              <p>Sources of money that reached your cash or bank balance.</p>
+              <p>Sources of money that reached one of your accounts.</p>
             </div>
           </div>
           {summary.bySource.length ? (
@@ -134,7 +137,7 @@ export default function Ledger({ data }: Props) {
               ))}
             </div>
           ) : (
-            <p className="preview-empty">No money has reached your cash or bank balance yet.</p>
+            <p className="preview-empty">No money has reached your accounts yet.</p>
           )}
         </section>
       </div>

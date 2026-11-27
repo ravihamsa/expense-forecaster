@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import type { CashFlow, FlowKind, MoneyAccount, NewCashFlow, Recurrence } from '../lib/types'
+import type { Account, CashFlow, FlowKind, MoneyAccount, NewCashFlow, Recurrence } from '../lib/types'
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../lib/categories'
 import { currencySymbol } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
@@ -15,12 +15,13 @@ const RECURRENCES: { value: Recurrence; label: string }[] = [
 interface Props {
   initial?: CashFlow | null
   defaultKind?: FlowKind
+  accounts?: Account[]
   currency?: string
   onSave: (input: NewCashFlow) => Promise<void>
   onCancel: () => void
 }
 
-export default function CashFlowForm({ initial, defaultKind = 'expense', currency = 'INR', onSave, onCancel }: Props) {
+export default function CashFlowForm({ initial, defaultKind = 'expense', accounts = [], currency = 'INR', onSave, onCancel }: Props) {
   const [kind, setKind] = useState<FlowKind>(initial?.kind ?? defaultKind)
   const [name, setName] = useState(initial?.name ?? '')
   const [amount, setAmount] = useState(String(initial?.amount ?? ''))
@@ -116,8 +117,10 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', currenc
         <label className="field">
           <span>Money account</span>
           <select value={account} onChange={(e) => setAccount(e.target.value as MoneyAccount)}>
-            <option value="bank">Bank balance</option>
-            <option value="cash">Cash in hand</option>
+            {(accounts.length ? accounts : [
+              { id: 'bank', name: 'Bank balance' },
+              { id: 'cash', name: 'Cash in hand' },
+            ]).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
           </select>
         </label>
         <label className="field">

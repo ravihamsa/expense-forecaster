@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import type { LoanDirection, MoneyAccount, NewLoanPayment } from '../lib/types'
+import type { Account, LoanDirection, MoneyAccount, NewLoanPayment } from '../lib/types'
 import { currencySymbol } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
 
@@ -7,15 +7,26 @@ interface Props {
   loanId: string
   loanName: string
   direction?: LoanDirection
+  accounts?: Account[]
+  defaultAccount?: MoneyAccount
   currency?: string
   onSave: (input: NewLoanPayment) => Promise<void>
   onCancel: () => void
 }
 
-export default function LoanPaymentForm({ loanId, loanName, direction = 'borrowed', currency = 'INR', onSave, onCancel }: Props) {
+export default function LoanPaymentForm({
+  loanId,
+  loanName,
+  direction = 'borrowed',
+  accounts = [],
+  defaultAccount,
+  currency = 'INR',
+  onSave,
+  onCancel,
+}: Props) {
   const isLent = direction === 'lent'
   const [amount, setAmount] = useState('')
-  const [account, setAccount] = useState<MoneyAccount>('bank')
+  const [account, setAccount] = useState<MoneyAccount>(defaultAccount || 'bank')
   const [date, setDate] = useState(toDateInputValue())
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -57,8 +68,10 @@ export default function LoanPaymentForm({ loanId, loanName, direction = 'borrowe
         <label className="field">
           <span>{isLent ? 'Received into' : 'Paid from'}</span>
           <select value={account} onChange={(e) => setAccount(e.target.value as MoneyAccount)}>
-            <option value="bank">Bank balance</option>
-            <option value="cash">Cash in hand</option>
+            {(accounts.length ? accounts : [
+              { id: 'bank', name: 'Bank balance' },
+              { id: 'cash', name: 'Cash in hand' },
+            ]).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
           </select>
         </label>
         <label className="field field-span-2">

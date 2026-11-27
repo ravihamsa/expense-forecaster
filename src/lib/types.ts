@@ -5,6 +5,7 @@ export type Tab =
   | 'goals'
   | 'actuals'
   | 'loans'
+  | 'accounts'
   | 'balance'
   | 'calendar'
   | 'ledger'
@@ -18,7 +19,29 @@ export type Recurrence =
   | 'every_n_years'
 
 export type FlowKind = 'income' | 'expense'
-export type MoneyAccount = 'cash' | 'bank'
+/** Account id. 'cash' and 'bank' are built in; custom ids are UUIDs. */
+export type MoneyAccount = string
+
+export interface Account {
+  id: string
+  user_id: string
+  name: string
+  kind: 'cash' | 'bank' | 'other'
+  opening_balance: number
+  created_at?: string
+}
+
+/** A net-neutral movement between two of your own accounts. */
+export interface Transfer {
+  id: string
+  user_id: string
+  from_account: string
+  to_account: string
+  amount: number
+  date: string
+  note: string
+  created_at?: string
+}
 
 export type LoanRepayment = 'emi' | 'one_time'
 export type LoanDirection = 'borrowed' | 'lent'
@@ -32,7 +55,7 @@ export interface Profile {
   /** Cash you physically hold; combined with bank_balance to start the plan. */
   cash_in_hand: number
   bank_balance: number
-  /** Derived total of cash_in_hand + bank_balance, used by the forecast. */
+  /** Derived total of every account's opening balance, used by the forecast. */
   opening_balance: number
   horizon_months: number
   income_growth_pct: number
@@ -48,7 +71,7 @@ export interface CashFlow {
   name: string
   amount: number
   category: string
-  /** Liquid account this flow hits. Older rows default to bank. */
+  /** Account this flow hits. Older rows default to bank. */
   account?: MoneyAccount
   recurrence: Recurrence
   interval_count: number
@@ -152,6 +175,8 @@ export interface Actual {
   category: string
   kind: FlowKind
   amount: number
+  /** Account the recorded amount was actually paid from / received into. */
+  account?: MoneyAccount
   /** Set to 'sms' for actuals imported from the Android companion. */
   source?: string
   note: string
@@ -169,7 +194,7 @@ export interface LedgerEntry {
   from: string
   to: string
   amount: number
-  kind: 'opening' | 'income' | 'expense' | 'borrowing' | 'repayment' | 'lent' | 'received'
+  kind: 'opening' | 'income' | 'expense' | 'borrowing' | 'repayment' | 'lent' | 'received' | 'transfer'
   cashFlowId?: string
   loanId?: string
 }
@@ -211,6 +236,8 @@ export interface LoanPayment {
 
 export interface AppData {
   profile: Profile
+  accounts: Account[]
+  transfers: Transfer[]
   monthlyIncomes: MonthlyIncome[]
   cashFlows: CashFlow[]
   cashFlowOverrides: CashFlowOverride[]
@@ -227,7 +254,7 @@ export interface AppData {
 /** Portable JSON envelope used to move data between browsers and accounts. */
 export interface DataExport {
   app: 'finplannar'
-  version: 1
+  version: 1 | 2
   exportedAt: string
   source: {
     mode: 'local' | 'supabase'
@@ -246,6 +273,8 @@ export interface FlowEvent {
   kind: FlowKind
   amount: number
   category: string
+  /** Account affected by this occurrence. */
+  account?: MoneyAccount
   source: 'profile' | 'cash_flow' | 'loan' | 'extra_payment'
   /** Cash flow behind this event, so it can be edited in the month preview. */
   cashFlowId?: string
@@ -286,6 +315,8 @@ export interface MonthProjection {
   net: number
   openingBalance: number
   closingBalance: number
+  /** Projected balance of every account at month end. */
+  accountBalances: Record<string, number>
   cumulativeNet: number
   events: FlowEvent[]
   activeLoans: number
@@ -306,6 +337,8 @@ export interface Simulation {
   totalDeficit: number
   endingBalance: number
   lowestBalance: number
+  /** Final projected balance per account. */
+  accountBalances: Record<string, number>
   payoff: { loanId: string; name: string; monthIndex: number; label: string }[]
 }
 
@@ -315,6 +348,8 @@ export interface SimulationOptions {
   extraPaymentLoanId: string | 'highest_rate'
 }
 
+export type NewAccount = Omit<Account, 'id' | 'user_id' | 'created_at'>
+export type NewTransfer = Omit<Transfer, 'id' | 'user_id' | 'created_at'>
 export type NewCashFlow = Omit<CashFlow, 'id' | 'user_id' | 'created_at'>
 export type NewLoan = Omit<Loan, 'id' | 'user_id' | 'created_at'>
 export type NewLoanPayment = Omit<LoanPayment, 'id' | 'user_id' | 'created_at' | 'applied_to_balance'>
@@ -328,6 +363,11 @@ export type NewActual = Omit<Actual, 'id' | 'user_id' | 'created_at'>
 
 export interface AppActions {
   saveProfile(patch: Partial<Profile>): Promise<void>
+  addAccount(input: NewAccount): Promise<void>
+  updateAccount(id: string, patch: Partial<NewAccount>): Promise<void>
+  deleteAccount(id: string): Promise<void>
+  addTransfer(input: NewTransfer): Promise<void>
+  deleteTransfer(id: string): Promise<void>
   upsertMonthlyIncome(input: NewMonthlyIncome): Promise<void>
   deleteMonthlyIncome(id: string): Promise<void>
   addCashFlow(input: NewCashFlow): Promise<void>

@@ -10,7 +10,9 @@ you can try everything immediately — data is stored in that browser only.
 ## Features
 
 - Email + password sign up / sign in (Supabase Auth), with per-user row-level security.
-- Expected income planned month by month directly in the dashboard's month preview (editable any time, carried forward when a month is skipped) with optional annual income growth, plus a starting balance made up of cash in hand and bank balance (their sum is where the forecast begins) and optional expense inflation.
+- Multiple money accounts: `Cash in hand` and `Bank balance` are built in; create your own (e.g. a **farm-house build fund**) with its own opening balance. Every account is a separate balance bucket included in net worth and the forecast. Cash flows, loans, payments and SMS imports can all be assigned to any account.
+- Net-neutral transfers between accounts, with both legs recorded at the same amount so your total never changes.
+- Expected income planned month by month directly in the dashboard's month preview (editable any time, carried forward when a month is skipped) with optional annual income growth, plus a starting balance that is the sum of every account's opening balance and optional expense inflation.
 - Cash flow entries with schedules:
   - monthly
   - yearly
@@ -37,7 +39,7 @@ you can try everything immediately — data is stored in that browser only.
   - loans given to others (receivables): each repayment received is counted as income in the month it lands, with no limit on how many repayment dates you record
   - the dashboard shows “You owe” and “Owed to you” as separate numbers; only borrowed EMIs count as monthly outgoings and lent EMIs count as income
   - payments recorded for today reduce the outstanding balance straight away; future-dated ones stay as planned forecast events
-- Strict money trail (double-entry style): every recorded movement has a source account and a destination account for the same amount. Existing entries dated today or earlier are included automatically, so you can see exactly where money came from and where it went.
+- Strict money trail (double-entry style): every recorded movement has a source account and a destination account for the same amount, including custom accounts and transfers. Existing entries dated today or earlier are included automatically, so you can see exactly where money came from and where it went.
 - Balance Plan:
   - trim flexible spending by a percentage and see the effect instantly
   - add an extra monthly loan prepayment, targeting a specific loan or the highest-interest loan
@@ -61,9 +63,10 @@ Open http://localhost:5173. Without a `.env.local` file you will be in local dem
 2. Open **SQL Editor → New query**, paste the contents of [`supabase/schema.sql`](supabase/schema.sql),
    and run it. This creates `profiles`, `monthly_incomes`, `cash_flows`, `cash_flow_overrides`,
    `cash_flow_moves`, `cash_flow_skips`, `budgets`, `goals`, `actuals`, `loans`, `loan_payments`,
-   the `account` columns used by the money trail, the income `day` used by the calendar,
-   `vendor_rules` learned by the SMS companion, row-level security policies and a trigger that
-   creates a profile for every new user.
+   `accounts` and `transfers`, the `account` columns used by the money trail, the income `day`
+   used by the calendar, `vendor_rules` learned by the SMS companion, row-level security policies
+   and a trigger that creates a profile (with cash and bank accounts) for every new user. Existing
+   projects get their cash/bank balances backfilled as built-in accounts.
    Re-run this file whenever you upgrade the app so new tables and policies are added.
 3. Copy `.env.example` to `.env.local` and fill in your project URL and anon public key:
 
@@ -132,7 +135,8 @@ same planner. It is **manual and foreground-only**: nothing watches SMS in the b
 2. It reads received messages from the **current month only** (50 per tap), parses them on the
    device, and shows each as an editable suggestion.
 3. Mark each message **Expense**, **Income**, or **Ignore**. Vendor, category, and account are
-   pre-filled from learned rules and can be edited.
+   pre-filled from learned rules and can be edited. The account picker lists every account in your
+   web plan (including custom funds), fetched from Supabase when the companion starts.
 4. Tap **Save selected**. Confirmed messages become one-time cash flows plus matching actuals, so
    they appear in the web dashboard, Actual vs plan, and the money trail. The rows are tagged
    `source = sms`.

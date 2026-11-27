@@ -1,6 +1,7 @@
 import { toDateInputValue } from './schedule'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
 import type {
+  Account,
   Actual,
   AppData,
   Budget,
@@ -14,9 +15,12 @@ import type {
   LoanPayment,
   MonthlyIncome,
   Profile,
+  Transfer,
   VendorRule,
 } from './types'
 
+export type AccountInput = Omit<Account, 'id' | 'user_id' | 'created_at'>
+export type TransferInput = Omit<Transfer, 'id' | 'user_id' | 'created_at'>
 export type CashFlowInput = Omit<CashFlow, 'id' | 'user_id' | 'created_at'>
 export type CashFlowOverrideInput = Omit<CashFlowOverride, 'id' | 'user_id' | 'created_at'>
 export type CashFlowMoveInput = Omit<CashFlowMove, 'id' | 'user_id' | 'created_at'>
@@ -36,6 +40,11 @@ export interface AuthUser {
 }
 
 export const usingSupabase = isSupabaseConfigured && supabase !== null
+
+/** Tables added in the multi-account migration may not exist yet on older projects. */
+function isMissingTable(code: string | undefined): boolean {
+  return code === '42P01' || code === 'PGRST205' || code === 'PGRST116'
+}
 
 export function isSmsImport(row: { source?: string }): boolean {
   return row.source === 'sms'
@@ -104,9 +113,19 @@ function defaultProfile(userId: string, displayName: string): Profile {
   }
 }
 
+function defaultAccounts(userId: string, profile: Profile): Account[] {
+  return [
+    { id: 'cash', user_id: userId, name: 'Cash in hand', kind: 'cash', opening_balance: profile.cash_in_hand || 0 },
+    { id: 'bank', user_id: userId, name: 'Bank balance', kind: 'bank', opening_balance: profile.bank_balance || 0 },
+  ]
+}
+
 function defaultData(userId: string, displayName: string): AppData {
+  const profile = defaultProfile(userId, displayName)
   return {
-    profile: defaultProfile(userId, displayName),
+    profile,
+    accounts: defaultAccounts(userId, profile),
+    transfers: [],
     monthlyIncomes: [],
     cashFlows: [],
     cashFlowOverrides: [],
@@ -279,27 +298,78 @@ function normalizeProfile(profile: Profile): Profile {
 }
 
 function normalizeData(data: AppData): AppData {
+  const raw = data as Partial<AppData>
+  const legacyProfile = normalizeProfile(raw.profile ?? defaultProfile('', ''))
+  const userId = legacyProfile.user_id
+
+  const accounts: Account[] = (raw.accounts ?? []).map((account) => ({
+    ...account,
+    user_id: account.user_id || userId,
+    name: account.name || account.id,
+    kind: account.kind === 'cash' || account.kind === 'bank' ? account.kind : 'other',
+    opening_balance: Math.max(0, Number(account.opening_balance) || 0),
+  }))
+  for (const builtIn of defaultAccounts(userId, legacyProfile)) {
+    if (!accounts.some((account) => account.id === builtIn.id)) accounts.push(builtIn)
+  }
+  // Referenced custom accounts from an older export still get a placeholder row.
+  const references = [
+    ...(raw.cashFlows ?? []).map((row) => row.account),
+    ...(raw.loans ?? []).map((row) => row.account),
+    ...(raw.loanPayments ?? []).map((row) => row.account),
+    ...(raw.actuals ?? []).map((row) => row.account),
+    ...(raw.vendorRules ?? []).map((row) => row.account),
+    ...(raw.transfers ?? []).flatMap((row) => [row.from_account, row.to_account]),
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)
+  references.forEach((id) => {
+    if (!accounts.some((account) => account.id === id)) {
+      accounts.push({ id, user_id: userId, name: id, kind: 'other', opening_balance: 0 })
+    }
+  })
+  const accountIds = new Set(accounts.map((account) => account.id))
+  const accountId = (value: string | undefined, fallback = 'bank'): string => {
+    const candidate = value || fallback
+    return accountIds.has(candidate) ? candidate : 'bank'
+  }
+  const cash = accounts.find((account) => account.id === 'cash')?.opening_balance ?? legacyProfile.cash_in_hand
+  const bank = accounts.find((account) => account.id === 'bank')?.opening_balance ?? legacyProfile.bank_balance
+
   return {
     ...data,
-    profile: normalizeProfile(data.profile),
-    monthlyIncomes: (data.monthlyIncomes ?? []).map((entry) => ({
+    profile: {
+      ...legacyProfile,
+      cash_in_hand: cash,
+      bank_balance: bank,
+      opening_balance: accounts.reduce((sum, account) => sum + account.opening_balance, 0),
+    },
+    accounts,
+    transfers: (raw.transfers ?? []).map((transfer) => ({
+      ...transfer,
+      user_id: transfer.user_id || userId,
+      from_account: accountId(transfer.from_account),
+      to_account: accountId(transfer.to_account),
+      amount: Math.max(0, Number(transfer.amount) || 0),
+      date: transfer.date || '',
+      note: transfer.note ?? '',
+    })),
+    monthlyIncomes: (raw.monthlyIncomes ?? []).map((entry) => ({
       ...entry,
       amount: Number(entry.amount) || 0,
       day: Math.max(1, Math.min(31, Math.round(Number(entry.day) || 1))),
       note: entry.note ?? '',
     })),
-    cashFlowOverrides: (data.cashFlowOverrides ?? []).map((override) => ({
+    cashFlowOverrides: (raw.cashFlowOverrides ?? []).map((override) => ({
       ...override,
       amount: Number(override.amount) || 0,
     })),
-    cashFlowMoves: data.cashFlowMoves ?? [],
-    cashFlowSkips: data.cashFlowSkips ?? [],
-    budgets: (data.budgets ?? []).map((budget) => ({
+    cashFlowMoves: raw.cashFlowMoves ?? [],
+    cashFlowSkips: raw.cashFlowSkips ?? [],
+    budgets: (raw.budgets ?? []).map((budget) => ({
       ...budget,
       monthly_limit: Number(budget.monthly_limit) || 0,
       rollover: budget.rollover ?? false,
     })),
-    goals: (data.goals ?? []).map((goal) => ({
+    goals: (raw.goals ?? []).map((goal) => ({
       ...goal,
       target_amount: Number(goal.target_amount) || 0,
       current_amount: Number(goal.current_amount) || 0,
@@ -307,31 +377,32 @@ function normalizeData(data: AppData): AppData {
       target_date: goal.target_date ?? null,
       note: goal.note ?? '',
     })),
-    vendorRules: (data.vendorRules ?? []).map((rule) => ({
+    vendorRules: (raw.vendorRules ?? []).map((rule) => ({
       ...rule,
       vendor_name: rule.vendor_name ?? '',
       category: rule.category || 'Other',
-      account: rule.account === 'cash' ? 'cash' : 'bank',
+      account: accountId(rule.account),
       auto_apply: rule.auto_apply ?? false,
     })),
-    actuals: (data.actuals ?? []).map((actual) => ({
+    actuals: (raw.actuals ?? []).map((actual) => ({
       ...actual,
       amount: Number(actual.amount) || 0,
       cash_flow_id: actual.cash_flow_id ?? null,
+      account: accountId(actual.account),
       note: actual.note ?? '',
     })),
-    cashFlows: (data.cashFlows ?? []).map((flow) => ({
+    cashFlows: (raw.cashFlows ?? []).map((flow) => ({
       ...flow,
-      account: flow.account === 'cash' ? 'cash' : 'bank',
+      account: accountId(flow.account),
     })),
-    loanPayments: (data.loanPayments ?? []).map((payment) => ({
+    loanPayments: (raw.loanPayments ?? []).map((payment) => ({
       ...payment,
-      account: payment.account === 'cash' ? 'cash' : 'bank',
+      account: accountId(payment.account ?? raw.loans?.find((loan) => loan.id === payment.loan_id)?.account),
       applied_to_balance: payment.applied_to_balance ?? false,
     })),
-    loans: (data.loans ?? []).map((loan) => ({
+    loans: (raw.loans ?? []).map((loan) => ({
       ...loan,
-      account: loan.account === 'cash' ? 'cash' : 'bank',
+      account: accountId(loan.account),
       direction: loan.direction ?? 'borrowed',
       repayment_type: loan.repayment_type ?? 'emi',
       due_date: loan.due_date ?? null,
@@ -343,6 +414,8 @@ export async function loadData(user: AuthUser): Promise<AppData> {
   if (usingSupabase && supabase) {
     const [
       profileResult,
+      accountsResult,
+      transfersResult,
       incomesResult,
       flowsResult,
       overridesResult,
@@ -356,6 +429,8 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       paymentsResult,
     ] = await Promise.all([
       supabase.from('profiles').select('*').eq('user_id', user.id).maybeSingle(),
+      supabase.from('accounts').select('*').eq('user_id', user.id).order('created_at', { ascending: true }),
+      supabase.from('transfers').select('*').eq('user_id', user.id).order('date', { ascending: false }),
       supabase.from('monthly_incomes').select('*').eq('user_id', user.id).order('month', { ascending: true }),
       supabase.from('cash_flows').select('*').eq('user_id', user.id).order('start_date', { ascending: false }),
       supabase.from('cash_flow_overrides').select('*').eq('user_id', user.id).order('month', { ascending: true }),
@@ -369,6 +444,8 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       supabase.from('loan_payments').select('*').eq('user_id', user.id).order('payment_date', { ascending: false }),
     ])
     if (profileResult.error) throw profileResult.error
+    if (accountsResult.error && !isMissingTable(accountsResult.error.code)) throw accountsResult.error
+    if (transfersResult.error && !isMissingTable(transfersResult.error.code)) throw transfersResult.error
     if (incomesResult.error) throw incomesResult.error
     if (flowsResult.error) throw flowsResult.error
     if (overridesResult.error) throw overridesResult.error
@@ -393,6 +470,10 @@ export async function loadData(user: AuthUser): Promise<AppData> {
     }
     return normalizeData({
       profile,
+      accounts: accountsResult.error ? [] : (accountsResult.data ?? []) as unknown as Account[],
+      transfers: transfersResult.error ? [] : (transfersResult.data ?? []).map(
+        (row) => ensureNumbers(row as unknown as Record<string, unknown>) as unknown as Transfer,
+      ),
       monthlyIncomes: (incomesResult.data ?? []).map(
         (row) => ensureNumbers(row as unknown as Record<string, unknown>) as unknown as MonthlyIncome,
       ),
@@ -435,19 +516,174 @@ async function updateLocal(user: AuthUser, updater: (data: AppData) => AppData):
   writeJSON(KEYS.data(user.id), updater(data))
 }
 
-export async function saveProfile(user: AuthUser, patch: ProfilePatch): Promise<void> {
+export async function saveProfile(user: AuthUser, patch: ProfilePatch, syncAccounts = true): Promise<void> {
   if (usingSupabase && supabase) {
     const { error } = await supabase
       .from('profiles')
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('user_id', user.id)
     if (error) throw error
+    if (syncAccounts) {
+      for (const [id, field] of [['cash', 'cash_in_hand'], ['bank', 'bank_balance']] as const) {
+        if (patch[field] === undefined) continue
+        // Keep any custom name/kind the user gave the built-in account.
+        const existing = await supabase
+          .from('accounts')
+          .select('name, kind')
+          .eq('user_id', user.id)
+          .eq('id', id)
+          .maybeSingle()
+        if (existing.error && !isMissingTable(existing.error.code)) throw existing.error
+        const { error: accountError } = await supabase.from('accounts').upsert({
+          id,
+          user_id: user.id,
+          name: existing.data?.name || (id === 'cash' ? 'Cash in hand' : 'Bank balance'),
+          kind: existing.data?.kind === 'cash' || existing.data?.kind === 'bank' ? existing.data.kind : id,
+          opening_balance: Math.max(0, Number(patch[field]) || 0),
+        }, { onConflict: 'user_id,id' })
+        if (accountError && !isMissingTable(accountError.code)) throw accountError
+      }
+    }
     return
   }
-  await updateLocal(user, (data) => ({
-    ...data,
-    profile: { ...data.profile, ...patch, updated_at: new Date().toISOString() },
-  }))
+  await updateLocal(user, (data) => {
+    const accounts = !syncAccounts ? data.accounts : data.accounts.map((account) => {
+      if (account.id === 'cash' && patch.cash_in_hand !== undefined) {
+        return { ...account, opening_balance: Math.max(0, Number(patch.cash_in_hand) || 0) }
+      }
+      if (account.id === 'bank' && patch.bank_balance !== undefined) {
+        return { ...account, opening_balance: Math.max(0, Number(patch.bank_balance) || 0) }
+      }
+      return account
+    })
+    const openingBalance = accounts.reduce((sum, account) => sum + account.opening_balance, 0)
+    return {
+      ...data,
+      accounts,
+      profile: { ...data.profile, ...patch, opening_balance: openingBalance, updated_at: new Date().toISOString() },
+    }
+  })
+}
+
+async function syncProfileFromAccounts(user: AuthUser, accounts: Account[]): Promise<void> {
+  const cash = accounts.find((account) => account.id === 'cash')?.opening_balance ?? 0
+  const bank = accounts.find((account) => account.id === 'bank')?.opening_balance ?? 0
+  const opening_balance = accounts.reduce((sum, account) => sum + account.opening_balance, 0)
+  await saveProfile(user, { cash_in_hand: cash, bank_balance: bank, opening_balance }, false)
+}
+
+export async function addAccount(user: AuthUser, input: AccountInput): Promise<Account> {
+  const row: Account = {
+    ...input,
+    id: makeId(),
+    user_id: user.id,
+    opening_balance: Math.max(0, Number(input.opening_balance) || 0),
+    name: input.name.trim(),
+    kind: input.kind === 'cash' || input.kind === 'bank' ? input.kind : 'other',
+  }
+  if (!row.name) throw new Error('Please name this account.')
+  if (usingSupabase && supabase) {
+    const { id: _id, created_at: _created, ...insertRow } = row
+    void _id
+    void _created
+    const { error } = await supabase.from('accounts').insert(insertRow).select().single()
+    if (error) throw error
+  } else {
+    const stored = await loadData(user)
+    writeJSON(KEYS.data(user.id), normalizeData({ ...stored, accounts: [...stored.accounts, row] }))
+  }
+  const current = await loadData(user)
+  await syncProfileFromAccounts(user, current.accounts)
+  return row
+}
+
+export async function updateAccount(user: AuthUser, id: string, patch: Partial<AccountInput>): Promise<void> {
+  if (usingSupabase && supabase) {
+    const clean: Record<string, unknown> = { ...patch }
+    if (clean.opening_balance !== undefined) clean.opening_balance = Math.max(0, Number(clean.opening_balance) || 0)
+    if (clean.name !== undefined) clean.name = String(clean.name).trim()
+    const { error } = await supabase.from('accounts').update(clean).eq('user_id', user.id).eq('id', id)
+    if (error) throw error
+  } else {
+    await updateLocal(user, (data) => ({
+      ...data,
+      accounts: data.accounts.map((account) => (account.id === id ? { ...account, ...patch } : account)),
+    }))
+  }
+  const current = await loadData(user)
+  await syncProfileFromAccounts(user, current.accounts)
+}
+
+export async function deleteAccount(user: AuthUser, id: string): Promise<void> {
+  if (id === 'cash' || id === 'bank') throw new Error('Cash and bank accounts are built in and cannot be removed.')
+  if (usingSupabase && supabase) {
+    const tables = [
+      ['cash_flows', 'account'],
+      ['loans', 'account'],
+      ['loan_payments', 'account'],
+      ['actuals', 'account'],
+      ['vendor_rules', 'account'],
+    ] as const
+    for (const [table, column] of tables) {
+      const { error } = await supabase.from(table).update({ [column]: 'bank' }).eq('user_id', user.id).eq(column, id)
+      if (error) throw error
+    }
+    for (const column of ['from_account', 'to_account'] as const) {
+      const { error } = await supabase.from('transfers').update({ [column]: 'bank' }).eq('user_id', user.id).eq(column, id)
+      if (error) throw error
+    }
+    const { error } = await supabase.from('accounts').delete().eq('user_id', user.id).eq('id', id)
+    if (error) throw error
+  } else {
+    await updateLocal(user, (data) => ({
+      ...data,
+      accounts: data.accounts.filter((account) => account.id !== id),
+      cashFlows: data.cashFlows.map((row) => (row.account === id ? { ...row, account: 'bank' } : row)),
+      loans: data.loans.map((row) => (row.account === id ? { ...row, account: 'bank' } : row)),
+      loanPayments: data.loanPayments.map((row) => (row.account === id ? { ...row, account: 'bank' } : row)),
+      actuals: data.actuals.map((row) => (row.account === id ? { ...row, account: 'bank' } : row)),
+      vendorRules: data.vendorRules.map((row) => (row.account === id ? { ...row, account: 'bank' } : row)),
+      transfers: data.transfers.map((row) => ({
+        ...row,
+        from_account: row.from_account === id ? 'bank' : row.from_account,
+        to_account: row.to_account === id ? 'bank' : row.to_account,
+      })),
+    }))
+  }
+  const current = await loadData(user)
+  await syncProfileFromAccounts(user, current.accounts)
+}
+
+export async function addTransfer(user: AuthUser, input: TransferInput): Promise<Transfer> {
+  const row: Transfer = {
+    ...input,
+    id: makeId(),
+    user_id: user.id,
+    amount: Math.max(0, Number(input.amount) || 0),
+    date: input.date,
+    note: input.note.trim(),
+  }
+  if (row.amount <= 0) throw new Error('Enter an amount greater than zero.')
+  if (row.from_account === row.to_account) throw new Error('Choose two different accounts.')
+  if (usingSupabase && supabase) {
+    const { id: _id, created_at: _created, ...insertRow } = row
+    void _id
+    void _created
+    const { data, error } = await supabase.from('transfers').insert(insertRow).select().single()
+    if (error) throw error
+    return ensureNumbers(data as unknown as Record<string, unknown>) as unknown as Transfer
+  }
+  await updateLocal(user, (data) => ({ ...data, transfers: [row, ...data.transfers] }))
+  return row
+}
+
+export async function deleteTransfer(user: AuthUser, id: string): Promise<void> {
+  if (usingSupabase && supabase) {
+    const { error } = await supabase.from('transfers').delete().eq('id', id).eq('user_id', user.id)
+    if (error) throw error
+    return
+  }
+  await updateLocal(user, (data) => ({ ...data, transfers: data.transfers.filter((row) => row.id !== id) }))
 }
 
 export async function upsertMonthlyIncome(user: AuthUser, input: MonthlyIncomeInput): Promise<MonthlyIncome> {
@@ -980,7 +1216,7 @@ export function listLocalDemoAccounts(): LocalDemoAccount[] {
 export function buildDataExport(user: AuthUser, data: AppData): DataExport {
   return {
     app: 'finplannar',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     source: { mode: usingSupabase ? 'supabase' : 'local', userId: user.id },
     account: {
@@ -999,7 +1235,7 @@ export function exportLocalDemoData(userId: string): DataExport | null {
   if (!stored?.profile) return null
   return {
     app: 'finplannar',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     source: { mode: 'local', userId },
     account: {
@@ -1020,7 +1256,9 @@ export function parseDataExport(text: string): DataExport {
   if (!raw || typeof raw !== 'object') throw new Error('That file does not contain a FinPlannar export.')
   const envelope = raw as Partial<DataExport>
   if (envelope.app !== 'finplannar') throw new Error('That JSON was not exported from FinPlannar.')
-  if (envelope.version !== 1) throw new Error(`Unsupported export version: ${String(envelope.version)}.`)
+  if (envelope.version !== 1 && envelope.version !== 2) {
+    throw new Error(`Unsupported export version: ${String(envelope.version)}.`)
+  }
   if (!envelope.data || typeof envelope.data !== 'object' || !(envelope.data as AppData).profile) {
     throw new Error('That export is missing its planner data.')
   }
@@ -1028,7 +1266,7 @@ export function parseDataExport(text: string): DataExport {
   const account = envelope.account
   return {
     app: 'finplannar',
-    version: 1,
+    version: envelope.version === 2 ? 2 : 1,
     exportedAt: typeof envelope.exportedAt === 'string' ? envelope.exportedAt : new Date().toISOString(),
     source: {
       mode: source?.mode === 'supabase' ? 'supabase' : 'local',
@@ -1056,12 +1294,29 @@ function remapData(data: AppData, userId: string): AppData {
     }
     return next
   }
+  const accountRef = (oldId: string | undefined): string => {
+    if (!oldId || oldId === 'cash' || oldId === 'bank') return oldId || 'bank'
+    return freshId(oldId)
+  }
+
+  const accounts = data.accounts.map((row) => ({
+    ...row,
+    id: row.id === 'cash' || row.id === 'bank' ? row.id : freshId(row.id),
+    user_id: userId,
+  }))
+  const transfers = data.transfers.map((row) => ({
+    ...row,
+    id: freshId(row.id),
+    user_id: userId,
+    from_account: accountRef(row.from_account),
+    to_account: accountRef(row.to_account),
+  }))
 
   const monthlyIncomes = data.monthlyIncomes.map((row) => ({
     ...row, id: freshId(row.id), user_id: userId,
   }))
   const cashFlows = data.cashFlows.map((row) => ({
-    ...row, id: freshId(row.id), user_id: userId,
+    ...row, id: freshId(row.id), user_id: userId, account: accountRef(row.account),
   }))
   const cashFlowOverrides = data.cashFlowOverrides.map((row) => ({
     ...row, id: freshId(row.id), user_id: userId, cash_flow_id: freshId(row.cash_flow_id),
@@ -1079,13 +1334,13 @@ function remapData(data: AppData, userId: string): AppData {
     ...row, id: freshId(row.id), user_id: userId,
   }))
   const vendorRules = data.vendorRules.map((row) => ({
-    ...row, id: freshId(row.id), user_id: userId,
+    ...row, id: freshId(row.id), user_id: userId, account: accountRef(row.account),
   }))
   const loans = data.loans.map((row) => ({
-    ...row, id: freshId(row.id), user_id: userId,
+    ...row, id: freshId(row.id), user_id: userId, account: accountRef(row.account),
   }))
   const loanPayments = data.loanPayments.map((row) => ({
-    ...row, id: freshId(row.id), user_id: userId, loan_id: freshId(row.loan_id),
+    ...row, id: freshId(row.id), user_id: userId, loan_id: freshId(row.loan_id), account: accountRef(row.account),
   }))
 
   // Actual keys are `${cashFlowId}-${timestamp}` (or `income-YYYY-MM`). Swap the
@@ -1100,11 +1355,14 @@ function remapData(data: AppData, userId: string): AppData {
     id: freshId(row.id),
     user_id: userId,
     cash_flow_id: row.cash_flow_id ? freshId(row.cash_flow_id) : null,
+    account: accountRef(row.account),
     event_key: remapEventKey(row.event_key),
   }))
 
   return normalizeData({
     profile: { ...data.profile, user_id: userId },
+    accounts,
+    transfers,
     monthlyIncomes,
     cashFlows,
     cashFlowOverrides,
@@ -1128,6 +1386,8 @@ function mergeData(current: AppData, incoming: AppData): AppData {
   }
   return normalizeData({
     profile: incoming.profile,
+    accounts: by([...current.accounts, ...incoming.accounts], (row) => row.id),
+    transfers: by([...current.transfers, ...incoming.transfers], (row) => row.id),
     monthlyIncomes: by([...current.monthlyIncomes, ...incoming.monthlyIncomes], (row) => row.month),
     cashFlows: by([...current.cashFlows, ...incoming.cashFlows], (row) => row.id),
     cashFlowOverrides: by(
@@ -1179,6 +1439,8 @@ export async function importDataExport(
       'goals',
       'vendor_rules',
       'monthly_incomes',
+      'transfers',
+      'accounts',
     ]
     for (const table of children) {
       const { error } = await client.from(table).delete().eq('user_id', user.id)
@@ -1200,6 +1462,8 @@ export async function importDataExport(
   }
 
   await writeRows('profiles', [{ ...imported.profile, updated_at: new Date().toISOString() }], 'user_id')
+  await writeRows('accounts', imported.accounts, 'user_id,id')
+  await writeRows('transfers', imported.transfers, 'id')
   await writeRows('cash_flows', imported.cashFlows)
   await writeRows('monthly_incomes', imported.monthlyIncomes, 'user_id,month')
   await writeRows('cash_flow_overrides', imported.cashFlowOverrides, 'user_id,cash_flow_id,month')

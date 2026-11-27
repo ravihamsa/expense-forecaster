@@ -139,6 +139,17 @@ final class SupabaseApi {
         }
     }
 
+    // ---------------------------------------------------------------- accounts
+
+    /** Account ids and names available to this user, including custom funds. */
+    JSONArray fetchAccounts(String userId) throws IOException, JSONException {
+        String path = "/rest/v1/accounts?select=id,name&user_id=eq."
+                + URLEncoder.encode(userId, "UTF-8")
+                + "&order=created_at.asc";
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
     // --------------------------------------------------------------- cash flows
 
     String insertCashFlow(Candidate candidate, String userId, String dateYyyyMmDd)
@@ -149,7 +160,7 @@ final class SupabaseApi {
         payload.put("name", nameOf(candidate));
         payload.put("amount", Math.abs(candidate.amount));
         payload.put("category", valueOr(candidate.category, "Other"));
-        payload.put("account", "cash".equals(candidate.account) ? "cash" : "bank");
+        payload.put("account", valueOr(candidate.account, "bank"));
         payload.put("recurrence", "one_time");
         payload.put("interval_count", 1);
         payload.put("start_date", dateYyyyMmDd);
@@ -188,6 +199,7 @@ final class SupabaseApi {
         payload.put("category", valueOr(candidate.category, ""));
         payload.put("kind", "income".equals(candidate.kind) ? "income" : "expense");
         payload.put("amount", Math.abs(candidate.amount));
+        payload.put("account", valueOr(candidate.account, "bank"));
         payload.put("source", "sms");
         payload.put("note", "Imported from SMS");
 
@@ -205,7 +217,7 @@ final class SupabaseApi {
         payload.put("vendor_name", valueOr(rule.vendorName, ""));
         payload.put("kind", "income".equals(rule.kind) ? "income" : "expense");
         payload.put("category", valueOr(rule.category, "Other"));
-        payload.put("account", "cash".equals(rule.account) ? "cash" : "bank");
+        payload.put("account", valueOr(rule.account, "bank"));
         payload.put("auto_apply", rule.autoApply);
         payload.put("updated_at", Instant.now().toString());
         // No id: the database default (gen_random_uuid) supplies it.

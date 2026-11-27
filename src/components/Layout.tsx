@@ -28,6 +28,7 @@ const NAV: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'goals', label: 'Goals', icon: Target },
   { id: 'actuals', label: 'Actual vs plan', icon: CheckCircle2 },
   { id: 'loans', label: 'Loans', icon: Landmark },
+  { id: 'accounts', label: 'Accounts', icon: Wallet },
   { id: 'balance', label: 'Balance plan', icon: Scale },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'ledger', label: 'Money trail', icon: BookOpen },

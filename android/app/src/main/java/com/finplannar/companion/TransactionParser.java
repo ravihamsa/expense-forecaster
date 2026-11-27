@@ -96,7 +96,7 @@ final class TransactionParser {
             if (rule != null) {
                 candidate.kind = "income".equals(rule.kind) ? "income" : "expense";
                 candidate.category = rule.category.isEmpty() ? candidate.category : rule.category;
-                candidate.account = "cash".equals(rule.account) ? "cash" : "bank";
+                candidate.account = rule.account == null || rule.account.isEmpty() ? "bank" : rule.account;
                 candidate.name = rule.vendorName.isEmpty() ? candidate.name : rule.vendorName;
                 candidate.source = "learned";
             }

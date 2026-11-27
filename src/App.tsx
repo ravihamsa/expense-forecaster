@@ -7,6 +7,7 @@ import Modal from './components/Modal'
 import * as api from './lib/data'
 import type { AuthUser } from './lib/data'
 import { simulate } from './lib/projections'
+import Accounts from './pages/Accounts'
 import Actuals from './pages/Actuals'
 import BalancePlan from './pages/BalancePlan'
 import Budgets from './pages/Budgets'
@@ -104,6 +105,11 @@ export default function App() {
     }
     return {
       saveProfile: (patch) => run(() => api.saveProfile(user!, patch), 'Settings saved.'),
+      addAccount: (input) => run(() => api.addAccount(user!, input).then(() => undefined), 'Account added.'),
+      updateAccount: (id, patch) => run(() => api.updateAccount(user!, id, patch), 'Account updated.'),
+      deleteAccount: (id) => run(() => api.deleteAccount(user!, id), 'Account removed.'),
+      addTransfer: (input) => run(() => api.addTransfer(user!, input).then(() => undefined), 'Transfer recorded.'),
+      deleteTransfer: (id) => run(() => api.deleteTransfer(user!, id), 'Transfer removed.'),
       upsertMonthlyIncome: (input) => run(() => api.upsertMonthlyIncome(user!, input).then(() => undefined), 'Income plan saved.'),
       deleteMonthlyIncome: (id) => run(() => api.deleteMonthlyIncome(user!, id), 'Income plan removed.'),
       addCashFlow: (input) => run(() => api.addCashFlow(user!, input).then(() => undefined), 'Cash flow added.'),
@@ -187,6 +193,9 @@ export default function App() {
         {tab === 'budgets' && <Budgets data={data} actions={actions} simulation={baseSimulation} currency={data.profile.currency || 'INR'} onNotify={notify} />}
         {tab === 'goals' && <Goals data={data} actions={actions} simulation={baseSimulation} currency={data.profile.currency || 'INR'} onNotify={notify} />}
         {tab === 'actuals' && <Actuals data={data} actions={actions} simulation={baseSimulation} currency={data.profile.currency || 'INR'} onNotify={notify} />}
+        {tab === 'accounts' && (
+          <Accounts data={data} actions={actions} simulation={baseSimulation} onNotify={notify} />
+        )}
         {tab === 'loans' && (
           <Loans
             data={data}
@@ -229,6 +238,7 @@ export default function App() {
         >
           <CashFlowForm
             defaultKind={quickAdd}
+            accounts={data.accounts}
             currency={data.profile.currency}
             onCancel={() => setQuickAdd(null)}
             onSave={handleQuickAdd}

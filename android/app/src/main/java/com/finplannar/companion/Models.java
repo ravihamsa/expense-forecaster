@@ -32,7 +32,7 @@ final class Candidate {
     String merchant = "";
     String name = "";
     String category = "Other";
-    String account = "bank";   // "cash" or "bank"
+    String account = "bank";   // built-in id or a custom account id from Supabase
     String kind = "expense";   // "income" or "expense"
     String source = "parsed";  // "learned" or "parsed"
     boolean ignored;
