@@ -66,8 +66,22 @@ export function budgetPeriodLabel(budget: Budget): string {
   return budget.rollover ? 'Monthly · rollover' : 'Monthly'
 }
 
-function categoryEvents(month: MonthProjection, category: string): FlowEvent[] {
-  return month.events.filter((event) => event.kind === 'expense' && event.category === category)
+function budgetEvents(month: MonthProjection, budget: Budget): FlowEvent[] {
+  const expenses = month.events.filter((event) => event.kind === 'expense')
+  if (budget.cash_flow_id) {
+    return expenses.filter((event) => event.cashFlowId === budget.cash_flow_id)
+  }
+  // Older rows may not have the link column applied yet. A named plan still
+  // maps to its own cash flow by name, so it does not absorb every expense in
+  // the category. Truly legacy category limits keep the old grouping.
+  const name = budget.name?.trim()
+  if (name) {
+    const named = expenses.filter(
+      (event) => event.category === budget.category && event.name === name,
+    )
+    if (named.length) return named
+  }
+  return expenses.filter((event) => event.category === budget.category)
 }
 
 function plannedAmount(events: FlowEvent[]): number {
@@ -112,7 +126,7 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
     const cycleRecorded = new Map<number, number>()
 
     const rows = months.map((month) => {
-      const events = categoryEvents(month, budget.category)
+      const events = budgetEvents(month, budget)
       const planned = plannedAmount(events)
       const recorded = recordedAmount(events, actuals)
       let spent = recorded
