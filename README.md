@@ -1,0 +1,125 @@
+# FinPlannar
+
+A personal finance planner that forecasts your cash flow months ahead, tracks recurring and one-off
+income/expenses, manages loans, and suggests practical ways to balance your finances.
+
+Built with **React + Vite + TypeScript** and **Supabase** (email/password auth + Postgres data).
+If Supabase credentials are not configured, the app automatically runs in a **local demo mode** so
+you can try everything immediately — data is stored in that browser only.
+
+## Features
+
+- Email + password sign up / sign in (Supabase Auth), with per-user row-level security.
+- Expected income planned month by month directly in the dashboard's month preview (editable any time, carried forward when a month is skipped) with optional annual income growth, plus a starting balance made up of cash in hand and bank balance (their sum is where the forecast begins) and optional expense inflation.
+- Cash flow entries with schedules:
+  - monthly
+  - yearly
+  - every N months
+  - every N years
+  - one-time / ad-hoc (income or expense)
+  - per-occurrence fixed amounts: edit any monthly/yearly (or other scheduled) income or expense directly in the dashboard's month preview; unedited occurrences keep the custom amount
+- 1–36 month rolling forecast showing:
+  - monthly net cash flow (surplus or deficit)
+  - projected closing balance
+  - months that may run into a deficit
+- Month preview on the dashboard: pick any forecast month (or click a chart bar / use prev-next buttons) to see every dated income, expense and loan cash flow with totals, edit expected income or any occurrence's amount inline, or add a new monthly/yearly entry
+- Calendar view: drag scheduled incomes and expenses to another date, or click an entry to move, duplicate, split, record an actual or delete it. Moves shift money between months and update the balance carried forward; duplicates and splits are saved as one-time entries.
+  - Delete offers **just this date** (skips one occurrence, with a restore chip) or **whole entry** (deletes the underlying recurring cash flow). For expected monthly income the choices are **just this month** or **from this month onward**.
+  - Recorded actuals are shown with a check on the calendar chip and feed budgets and the Actual vs plan page.
+- Category budgets: monthly limits per expense category, optional rollover of unused (or overspent) amounts, and a month-by-month comparison of planned, recorded and spent amounts.
+- Goals & sinking funds: target, current savings, monthly contribution and target month, with required monthly amount, projected gap and a check against the average forecast surplus.
+- Planned vs actual: record the real amount for any forecast occurrence from the calendar or the Actual vs plan page, or import a CSV with `date,name,amount` columns. Only rows that match a planned occurrence are imported.
+- Loans with original amount, outstanding balance, interest rate, EMI, due day and tenure.
+  - amortisation-based payoff estimates
+  - interest remaining
+  - warning when an EMI does not cover monthly interest
+  - interest-free hand loans with no EMI, repaid by a planned lump-sum date and/or multiple recorded one-time payments, each with its own date
+  - loans given to others (receivables): each repayment received is counted as income in the month it lands, with no limit on how many repayment dates you record
+  - the dashboard shows “You owe” and “Owed to you” as separate numbers; only borrowed EMIs count as monthly outgoings and lent EMIs count as income
+  - payments recorded for today reduce the outstanding balance straight away; future-dated ones stay as planned forecast events
+- Strict money trail (double-entry style): every recorded movement has a source account and a destination account for the same amount. Existing entries dated today or earlier are included automatically, so you can see exactly where money came from and where it went.
+- Balance Plan:
+  - trim flexible spending by a percentage and see the effect instantly
+  - add an extra monthly loan prepayment, targeting a specific loan or the highest-interest loan
+  - before/after chart, deficit reduction, interest saved, balance improvement, loans cleared sooner
+  - contextual suggestions based on your actual plan
+- INR formatting by default (₹ with Indian digit grouping); USD, EUR and GBP can be selected in Settings.
+
+## Run locally
+
+```bash
+npm install
+npm run dev
+```
+
+Open http://localhost:5173. Without a `.env.local` file you will be in local demo mode.
+
+## Connect Supabase
+
+1. Create a project at [supabase.com](https://supabase.com).
+2. Open **SQL Editor → New query**, paste the contents of [`supabase/schema.sql`](supabase/schema.sql),
+   and run it. This creates `profiles`, `monthly_incomes`, `cash_flows`, `cash_flow_overrides`,
+   `cash_flow_moves`, `cash_flow_skips`, `budgets`, `goals`, `actuals`, `loans`, `loan_payments`,
+   the `account` columns used by the money trail, the income `day` used by the calendar,
+   row-level security policies and a trigger that creates a profile for every new user.
+   Re-run this file whenever you upgrade the app so new tables and policies are added.
+3. Copy `.env.example` to `.env.local` and fill in your project URL and anon public key:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   ```env
+   VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+   VITE_SUPABASE_ANON_KEY=YOUR_ANON_PUBLIC_KEY
+   ```
+
+4. Restart the dev server. Sign up, and your data will be stored in Supabase.
+
+> Enable email confirmation under **Authentication → Providers → Email** if you want verified
+> sign-ups. The app handles both flows (immediate session and "check your email" confirmation).
+
+## Production build
+
+```bash
+npm run build
+npm run preview
+```
+
+Host the `dist/` folder on any static host (Vercel, Netlify, Cloudflare Pages, etc.). Add the two
+`VITE_SUPABASE_*` variables to the host's build environment. The anon key is safe to expose —
+access is controlled by the Supabase RLS policies in the schema.
+
+## Project structure
+
+```
+src/
+  App.tsx                 app state, auth and data orchestration
+  components/             auth screen, layout, modal, forms
+  pages/                  dashboard, cash flow, budgets, goals, actuals, loans, balance plan, calendar, money trail, settings
+  lib/
+    advice.ts             recommendations based on the current plan
+    actuals.ts            actual creation and CSV import helpers
+    budgets.ts            per-category budget and rollover calculations
+    categories.ts         shared income/expense category lists
+    data.ts               Supabase/local demo persistence and auth
+    format.ts             currency and date formatting
+    goals.ts              goal funding and progress calculations
+    ledger.ts             strict paired-account money trail derived from recorded data
+    projections.ts        cash flow simulation and loan amortisation
+    schedule.ts           recurrence rules
+    types.ts              shared types
+    supabaseClient.ts     Supabase client / configuration check
+supabase/schema.sql       database schema, RLS policies, signup trigger
+```
+
+## How the forecast works
+
+Each month, the simulator adds your planned expected income for that month (plus any scheduled
+income), subtracts recurring and one-time expenses, accrues and pays loan EMIs, and carries the resulting balance
+forward. A fixed amount set for a specific occurrence is used exactly as entered, while other
+occurrences keep the cash flow's custom amount (with inflation applied to expenses). Calendar moves are applied before monthly totals are calculated, so an entry dragged into another month changes both months' net and the balance carried forward. Skipped occurrences are excluded from both the forecast and the money trail. A month is marked as a deficit when its net cash flow is negative. Prepaid loan amounts are
+distributed to the chosen loan first, then to the next highest-interest loan. All of this runs
+entirely in the browser, so the what-if sliders are instant and never overwrite your saved entries.
+The Money trail is separate: only entries dated today or earlier become balanced ledger pairs, while
+future dates stay in the forecast.
