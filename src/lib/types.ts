@@ -296,9 +296,11 @@ export interface FlowEvent {
   category: string
   /** Account affected by this occurrence. */
   account?: MoneyAccount
-  source: 'profile' | 'cash_flow' | 'loan' | 'extra_payment'
+  source: 'profile' | 'cash_flow' | 'budget' | 'actual' | 'loan' | 'extra_payment'
   /** Cash flow behind this event, so it can be edited in the month preview. */
   cashFlowId?: string
+  /** Planned spend behind this event. Budgets are the only future spend source. */
+  budgetId?: string
   /** Monthly income row behind this event, when one was planned explicitly. */
   monthlyIncomeId?: string
   /** Exact calendar date (YYYY-MM-DD) the cash flow lands on. */

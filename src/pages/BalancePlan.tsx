@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { buildAdvice } from '../lib/advice'
+import { budgetPeriod } from '../lib/budgets'
 import { formatCompact, formatMoney, formatSigned } from '../lib/format'
 import { isDiscretionary } from '../lib/projections'
 import type { AppData, Simulation, SimulationOptions, Tab } from '../lib/types'
@@ -23,22 +24,17 @@ interface Props {
   onNavigate: (tab: Tab) => void
 }
 
-function monthlyEquivalent(amount: number, recurrence: string, interval: number): number {
-  switch (recurrence) {
-    case 'monthly': return amount
-    case 'yearly': return amount / 12
-    case 'every_n_months': return amount / Math.max(1, interval)
-    case 'every_n_years': return amount / (12 * Math.max(1, interval))
-    default: return 0
-  }
-}
-
 export default function BalancePlan({ data, baseSimulation, simulation, options, onOptionsChange, onNavigate }: Props) {
   const currency = data.profile.currency || 'INR'
   const advice = buildAdvice(data, baseSimulation)
-  const discretionaryMonthly = data.cashFlows
-    .filter((flow) => flow.kind === 'expense' && isDiscretionary(flow))
-    .reduce((sum, flow) => sum + monthlyEquivalent(flow.amount, flow.recurrence, flow.interval_count), 0)
+  const discretionaryMonthly = data.budgets
+    .filter((budget) => isDiscretionary(budget.category))
+    .reduce((sum, budget) => {
+      const period = budgetPeriod(budget)
+      if (period === 'monthly') return sum + Math.max(0, budget.monthly_limit)
+      if (period === 'yearly') return sum + Math.max(0, budget.monthly_limit) / 12
+      return sum
+    }, 0)
   const monthlySaving = discretionaryMonthly * (options.expenseCutPct / 100)
 
   const deficitChange = baseSimulation.deficitMonths - simulation.deficitMonths
@@ -96,7 +92,7 @@ export default function BalancePlan({ data, baseSimulation, simulation, options,
             <p className="adjust-hint">
               {discretionaryMonthly > 0
                 ? `About ${formatMoney(monthlySaving, currency)} per month from shopping, dining, subscriptions and similar categories.`
-                : 'Add an expense in a flexible category (Shopping, Dining, Travel…) to use this slider.'}
+                : 'Add a planned spend in a flexible category (Shopping, Dining, Travel…) to use this slider.'}
             </p>
           </div>
 

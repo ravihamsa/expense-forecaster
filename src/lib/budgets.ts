@@ -1,4 +1,4 @@
-import type { AppData, Budget, BudgetPeriod, FlowEvent, MonthProjection } from './types'
+import type { Actual, AppData, Budget, BudgetPeriod, FlowEvent, MonthProjection } from './types'
 
 const LEGACY_START_DATE = '1970-01-01'
 
@@ -66,36 +66,59 @@ export function budgetPeriodLabel(budget: Budget): string {
   return budget.rollover ? 'Monthly · rollover' : 'Monthly'
 }
 
-function budgetEvents(month: MonthProjection, budget: Budget): FlowEvent[] {
-  const expenses = month.events.filter((event) => event.kind === 'expense')
-  if (budget.cash_flow_id) {
-    return expenses.filter((event) => event.cashFlowId === budget.cash_flow_id)
+function dateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** The minimum month shape needed to match budgets and recorded spends. */
+export type BudgetMonthView = Pick<MonthProjection, 'key' | 'year' | 'monthIndex'> & {
+  events: FlowEvent[]
+}
+
+/** Stable id for a planned-spend occurrence, also used by recorded amounts. */
+export function budgetEventId(budget: Budget, date: string): string {
+  return `budget-${budget.id}-${date}`
+}
+
+export function standaloneActualEventId(actualId: string): string {
+  return `actual-${actualId}`
+}
+
+/** The exact calendar date a plan lands on inside a projection month. */
+export function budgetOccurrenceDate(
+  budget: Budget,
+  month: Pick<MonthProjection, 'key' | 'year' | 'monthIndex'>,
+): string | null {
+  const startDate = budgetStartDate(budget)
+  const period = budgetPeriod(budget)
+  if (period === 'monthly') {
+    return dateKey(new Date(month.year, month.monthIndex, 1))
   }
-  // Older rows may not have the link column applied yet. A named plan still
-  // maps to its own cash flow by name, so it does not absorb every expense in
-  // the category. Truly legacy category limits keep the old grouping.
-  const name = budget.name?.trim()
-  if (name) {
-    const named = expenses.filter(
-      (event) => event.category === budget.category && event.name === name,
-    )
-    if (named.length) return named
+  const startMonth = Number(startDate.slice(5, 7)) - 1
+  if (!Number.isInteger(startMonth) || startMonth !== month.monthIndex) return null
+  if (period === 'one_time') {
+    return month.key === startDate.slice(0, 7) ? startDate : null
   }
-  return expenses.filter((event) => event.category === budget.category)
+  const startYear = Number(startDate.slice(0, 4)) || 1970
+  if (month.year < startYear) return null
+  const day = Number(startDate.slice(8, 10)) || 1
+  const lastDay = new Date(month.year, month.monthIndex + 1, 0).getDate()
+  return dateKey(new Date(month.year, month.monthIndex, Math.min(day, lastDay)))
+}
+
+function budgetEvents(month: BudgetMonthView, budget: Budget): FlowEvent[] {
+  // Budgets are the only planned-spend source. The deprecated cash_flow_id and
+  // category-only fallbacks are intentionally gone.
+  return month.events.filter(
+    (event) => event.kind === 'expense' && event.source === 'budget' && event.budgetId === budget.id,
+  )
 }
 
 function plannedAmount(events: FlowEvent[]): number {
   return events.reduce((sum, event) => sum + event.amount, 0)
 }
 
-function recordedAmount(
-  events: FlowEvent[],
-  actuals: Map<string, { amount: number }>,
-): number {
-  return events.reduce((sum, event) => sum + (actuals.get(event.id)?.amount ?? 0), 0)
-}
-
-function yearlyCycleStartYear(startDate: string, month: MonthProjection): number | null {
+function yearlyCycleStartYear(startDate: string, month: BudgetMonthView): number | null {
   const startYear = Number(startDate.slice(0, 4)) || 1970
   const startMonth = Number(startDate.slice(5, 7)) - 1
   if (!Number.isFinite(startMonth) || startMonth < 0 || startMonth > 11) return null
@@ -104,15 +127,51 @@ function yearlyCycleStartYear(startDate: string, month: MonthProjection): number
   return year >= startYear ? year : null
 }
 
+interface MonthActuals {
+  byEventId: Map<string, Actual>
+}
+
+type AssignedActuals = Map<string, Map<string, MonthActuals>>
+
+function assignActuals(data: AppData, months: BudgetMonthView[]): AssignedActuals {
+  const assigned: AssignedActuals = new Map()
+  const claimed = new Set<string>()
+  const expenses = (data.actuals ?? []).filter((actual) => actual.kind === 'expense')
+
+  // Migration re-keys recorded spends to the exact budget occurrence they
+  // replace. Only those direct matches count toward a budget.
+  for (const month of months) {
+    for (const budget of data.budgets ?? []) {
+      let byBudget = assigned.get(budget.id)
+      if (!byBudget) {
+        byBudget = new Map()
+        assigned.set(budget.id, byBudget)
+      }
+      let bucket = byBudget.get(month.key)
+      if (!bucket) {
+        bucket = { byEventId: new Map() }
+        byBudget.set(month.key, bucket)
+      }
+      for (const event of budgetEvents(month, budget)) {
+        const actual = expenses.find((entry) => !claimed.has(entry.id) && entry.event_key === event.id)
+        if (!actual) continue
+        claimed.add(actual.id)
+        bucket.byEventId.set(event.id, actual)
+      }
+    }
+  }
+
+  return assigned
+}
+
 /**
- * Builds per-allocation statuses. Legacy monthly budgets keep their original
- * behaviour: each month gets the full limit, rollover carries forward, and an
- * unrecorded forecast event counts as spent. Yearly and one-time allocations
- * are dated, apply only in their window, and count only recorded actuals so a
- * future plan is not reported as money already spent.
+ * Builds per-plan statuses. Legacy monthly plans keep their original
+ * limit/rollover calculation: an unrecorded occurrence counts as planned until
+ * a real spend appears. Yearly and one-time plans count only recorded spends so
+ * a future plan is never reported as money already spent.
  */
 export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): BudgetStatus[] {
-  const actuals = new Map((data.actuals ?? []).map((actual) => [actual.event_key, actual]))
+  const assigned = assignActuals(data, months)
   const accountNames = new Map((data.accounts ?? []).map((account) => [account.id, account.name]))
 
   return (data.budgets ?? []).map((budget) => {
@@ -127,8 +186,12 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
 
     const rows = months.map((month) => {
       const events = budgetEvents(month, budget)
+      const bucket = assigned.get(budget.id)?.get(month.key)
+      const eventActuals = bucket?.byEventId ?? new Map<string, Actual>()
+      const monthActuals = [...eventActuals.values()]
+      const hasRecorded = monthActuals.length > 0
       const planned = plannedAmount(events)
-      const recorded = recordedAmount(events, actuals)
+      const recorded = monthActuals.reduce((sum, actual) => sum + Math.max(0, actual.amount), 0)
       let spent = recorded
       let carriedIn = 0
       let available = 0
@@ -137,16 +200,22 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
       let active = true
 
       if (period === 'monthly') {
-        // Preserve the original monthly-limit and rollover calculation.
-        spent = events.reduce(
-          (sum, event) => sum + (actuals.get(event.id)?.amount ?? event.amount),
-          0,
-        )
         carriedIn = budget.rollover ? carried : 0
         available = amount + carriedIn
-        remaining = available - spent
-        carriedOut = budget.rollover ? remaining : 0
-        carried = carriedOut
+        if (hasRecorded) {
+          // A real spend replaces the placeholder, even when it came from SMS.
+          spent = recorded
+          remaining = available - spent
+          carriedOut = budget.rollover ? remaining : 0
+          carried = carriedOut
+        } else {
+          // An unspent future month keeps any earlier carry moving forward; it
+          // does not pre-spend a budget that has not happened yet.
+          spent = planned
+          remaining = 0
+          carriedOut = budget.rollover ? carriedIn : 0
+          carried = carriedOut
+        }
       } else if (period === 'yearly') {
         const cycleYear = yearlyCycleStartYear(startDate, month)
         if (cycleYear !== null) {
@@ -157,35 +226,41 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
           remaining = available
         }
       } else {
-        const targetMonth = startDate.slice(0, 7)
-        active = month.key === targetMonth
+        active = month.key === startDate.slice(0, 7)
         if (active) {
           available = amount
           remaining = amount - recorded
         }
       }
 
-      const expenses: BudgetExpense[] = events
-        .map((event) => {
-          const actual = actuals.get(event.id)
-          const recordedValue = actual?.amount
+      const accountLabel = (value: string | undefined): string => (
+        value ? accountNames.get(value) ?? value : ''
+      )
+      const actualSource = (actual: Actual): string => (
+        actual.source === 'sms' ? 'SMS import' : 'Actual'
+      )
+
+      const expenses: BudgetExpense[] = [
+        ...events.map((event) => {
+          const actual = eventActuals.get(event.id)
           const counted = period === 'monthly'
-            ? recordedValue ?? event.amount
+            ? actual?.amount ?? (hasRecorded ? 0 : event.amount)
             : active
-              ? recordedValue ?? 0
+              ? actual?.amount ?? 0
               : 0
           return {
             id: event.id,
             name: event.name,
             date: event.date,
             planned: event.amount,
-            recorded: recordedValue,
+            recorded: actual?.amount,
             counted,
-            accountLabel: event.account ? accountNames.get(event.account) ?? event.account : '',
+            accountLabel: accountLabel(actual?.account ?? event.account),
             note: actual?.note ?? '',
-            source: actual ? (actual.source === 'sms' ? 'SMS import' : 'Actual') : 'Planned',
+            source: actual ? actualSource(actual) : 'Planned',
           }
-        })
+        }),
+      ]
         .filter((item) => item.counted > 0)
         .sort((a, b) => b.counted - a.counted || a.date.localeCompare(b.date) || a.name.localeCompare(b.name))
 

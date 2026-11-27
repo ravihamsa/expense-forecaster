@@ -1,4 +1,4 @@
-import { occurrencesInMonth, toDateInputValue } from './schedule'
+import { toDateInputValue } from './schedule'
 import type { AppData, LedgerEntry, MoneyAccount } from './types'
 
 export const CASH_ACCOUNT = 'cash'
@@ -100,56 +100,26 @@ export function accountLabel(account: string, data: AppData): string {
 export function buildLedger(data: AppData, from = new Date()): LedgerEntry[] {
   const today = toDateInputValue(from)
   const entries: LedgerEntry[] = []
-  const moves = new Map((data.cashFlowMoves ?? []).map((move) => [`${move.cash_flow_id}|${move.from_date}`, move]))
-  const skips = new Set((data.cashFlowSkips ?? []).map((skip) => `${skip.cash_flow_id}|${skip.date}`))
-  const overrides = new Map(
-    (data.cashFlowOverrides ?? []).map((override) => [`${override.cash_flow_id}|${override.month}`, override.amount]),
-  )
-  const currentIndex = from.getFullYear() * 12 + from.getMonth()
-  const latestMovedSource = (data.cashFlowMoves ?? []).reduce((latest, move) => {
-    const [year, month] = move.from_date.split('-').map(Number)
-    return Number.isInteger(year) && Number.isInteger(month)
-      ? Math.max(latest, year * 12 + (month - 1))
-      : latest
-  }, currentIndex)
 
-  for (const flow of data.cashFlows ?? []) {
-    if (!flow.start_date) continue
-    const [startYear, startMonth] = flow.start_date.split('-').map(Number)
-    if (!startYear || !startMonth) continue
-    const startIndex = startYear * 12 + (startMonth - 1)
-    const lastIndex = Math.max(currentIndex, latestMovedSource)
-    const money = moneyAccount(flow.account)
-    const counterpart = flow.kind === 'income'
-      ? incomeAccount(flow.category)
-      : expenseAccount(flow.category)
-
-    for (let index = startIndex; index <= lastIndex && index < startIndex + 240; index += 1) {
-      const year = Math.floor(index / 12)
-      const month = index % 12
-      for (const occurrence of occurrencesInMonth(flow, year, month)) {
-        const originalDate = dateKey(occurrence)
-        if (flow.end_date && originalDate > flow.end_date) continue
-        if (skips.has(`${flow.id}|${originalDate}`)) continue
-        const move = moves.get(`${flow.id}|${originalDate}`)
-        const date = move?.to_date || originalDate
-        if (date > today) continue
-        const monthKey = originalDate.slice(0, 7)
-        const fixed = overrides.get(`${flow.id}|${monthKey}`)
-        const amount = Math.max(0, fixed !== undefined ? Number(fixed) || 0 : Number(flow.amount) || 0)
-        if (amount <= 0) continue
-        entries.push({
-          id: `${flow.id}-${originalDate}`,
-          date,
-          description: flow.name,
-          from: flow.kind === 'income' ? counterpart : money,
-          to: flow.kind === 'income' ? money : counterpart,
-          amount,
-          kind: flow.kind === 'income' ? 'income' : 'expense',
-          cashFlowId: flow.id,
-        })
-      }
-    }
+  // Only recorded amounts have happened. Budgets describe future intentions and
+  // never create a money-trail row until an actual spend is recorded.
+  for (const actual of data.actuals ?? []) {
+    if (!actual.date || actual.date > today) continue
+    const amount = Math.max(0, Number(actual.amount) || 0)
+    if (amount <= 0) continue
+    const money = moneyAccount(actual.account)
+    const counterpart = actual.kind === 'income'
+      ? incomeAccount(actual.category)
+      : expenseAccount(actual.category)
+    entries.push({
+      id: `actual-${actual.id}`,
+      date: actual.date,
+      description: actual.name || (actual.kind === 'income' ? 'Income' : 'Spend'),
+      from: actual.kind === 'income' ? counterpart : money,
+      to: actual.kind === 'income' ? money : counterpart,
+      amount,
+      kind: actual.kind === 'income' ? 'income' : 'expense',
+    })
   }
 
   const loansById = new Map((data.loans ?? []).map((loan) => [loan.id, loan]))

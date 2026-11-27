@@ -25,10 +25,11 @@ import {
 } from 'recharts'
 import FundingView from '../components/FundingView'
 import MonthPreview from '../components/MonthPreview'
+import { budgetPeriod } from '../lib/budgets'
 import { formatCompact, formatMoney, formatSigned, monthKey, shortMonthLabel } from '../lib/format'
 import { summarizeLoans } from '../lib/loans'
 import { expectedMonthlyIncome, loanPayoffMonths } from '../lib/projections'
-import { nextOccurrence, recurrenceLabel } from '../lib/schedule'
+import { nextOccurrence, recurrenceLabel, toDateInputValue } from '../lib/schedule'
 import type { AppActions, AppData, FlowKind, MonthProjection, Simulation, Tab } from '../lib/types'
 
 interface Props {
@@ -73,19 +74,14 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const [previewMonth, setPreviewMonth] = useState(simulation.months[0]?.key ?? '')
 
-  const cashFlowExpenses = cashFlows
-    .filter((flow) => flow.kind === 'expense')
-    .reduce((sum, flow) => {
-      switch (flow.recurrence) {
-        case 'monthly': return sum + flow.amount
-        case 'yearly': return sum + flow.amount / 12
-        case 'every_n_months': return sum + flow.amount / Math.max(1, flow.interval_count)
-        case 'every_n_years': return sum + flow.amount / (12 * Math.max(1, flow.interval_count))
-        default: return sum
-      }
-    }, 0)
+  const budgetExpenses = data.budgets.reduce((sum, budget) => {
+    const period = budgetPeriod(budget)
+    if (period === 'monthly') return sum + Math.max(0, budget.monthly_limit)
+    if (period === 'yearly') return sum + Math.max(0, budget.monthly_limit) / 12
+    return sum
+  }, 0)
   const loanTotals = summarizeLoans(loans)
-  const monthlyExpenses = cashFlowExpenses + loanTotals.monthlyEmi
+  const monthlyExpenses = budgetExpenses + loanTotals.monthlyEmi
   const monthlySavings = (data.goals ?? []).reduce((sum, goal) => sum + Math.max(0, goal.monthly_contribution), 0)
 
   const firstMonthKey = simulation.months[0]?.key ?? ''
@@ -103,8 +99,20 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
     kind: FlowKind
   }
 
+  const today = toDateInputValue()
   const upcoming: UpcomingItem[] = [
+    ...simulation.months.flatMap((month) => month.events
+      .filter((event) => event.source === 'budget' && event.date >= today)
+      .map((event) => ({
+        id: event.id,
+        name: event.name,
+        detail: 'Planned spend',
+        date: new Date(`${event.date}T00:00:00`),
+        amount: event.amount,
+        kind: event.kind,
+      }))),
     ...cashFlows
+      .filter((flow) => flow.kind === 'income')
       .map((flow) => {
         const date = nextOccurrence(flow)
         if (!date) return null
@@ -376,7 +384,7 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
         <div className="card-head">
           <div>
             <h2>Coming up</h2>
-            <p>Your next scheduled cash flows</p>
+            <p>Your next planned spends and income</p>
           </div>
           <button className="icon-button" onClick={() => onNavigate('cashflows')} title="View all"><ArrowLeftRight size={17} /></button>
         </div>

@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
   ArrowDownLeft,
-  ArrowUpRight,
   CalendarDays,
   PiggyBank,
   Pencil,
@@ -23,7 +22,7 @@ interface Props {
   onNotify: (message: string) => void
 }
 
-type Filter = 'all' | FlowKind | 'sms'
+type Filter = 'all' | 'income'
 
 function monthlyValue(flow: CashFlow): number {
   switch (flow.recurrence) {
@@ -41,21 +40,20 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<{ mode: 'add' | 'edit'; flow?: CashFlow; kind?: FlowKind } | null>(null)
 
+  const incomeFlows = useMemo(() => data.cashFlows.filter((flow) => flow.kind === 'income'), [data.cashFlows])
   const flows = useMemo(() => {
-    return data.cashFlows
-      .filter((flow) => filter === 'all' || (filter === 'sms' ? isSmsImport(flow) : flow.kind === filter))
+    return incomeFlows
+      .filter((flow) => filter === 'all' || flow.kind === filter)
       .filter((flow) => `${flow.name} ${flow.category} ${flow.note}`.toLowerCase().includes(search.toLowerCase()))
       .sort((a, b) => (nextOccurrence(b)?.getTime() ?? 0) - (nextOccurrence(a)?.getTime() ?? 0))
-  }, [data.cashFlows, filter, search])
+  }, [incomeFlows, filter, search])
 
-  const monthlyIncome = data.cashFlows.filter((flow) => flow.kind === 'income').reduce((sum, flow) => sum + monthlyValue(flow), 0)
-  const monthlyExpense = data.cashFlows.filter((flow) => flow.kind === 'expense').reduce((sum, flow) => sum + monthlyValue(flow), 0)
+  const monthlyIncome = incomeFlows.reduce((sum, flow) => sum + monthlyValue(flow), 0)
   const monthlySavings = (data.goals ?? []).reduce((sum, goal) => sum + Math.max(0, goal.monthly_contribution), 0)
-  const scheduledCount = data.cashFlows.filter((flow) => {
+  const scheduledCount = incomeFlows.filter((flow) => {
     const next = nextOccurrence(flow)
     return next !== null && flow.recurrence !== 'monthly'
   }).length
-  const smsCount = data.cashFlows.filter(isSmsImport).length
 
   async function handleSave(input: NewCashFlow) {
     if (modal?.mode === 'edit' && modal.flow) {
@@ -78,37 +76,24 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
     }
   }
 
-  async function handleRemoveSms() {
-    if (!window.confirm(`Remove all ${smsCount} SMS-imported cash flows and their recorded amounts? Manual entries stay untouched.`)) return
-    try {
-      await actions.deleteSmsImports()
-      setFilter('all')
-      onNotify('SMS imports removed.')
-    } catch (caught) {
-      onNotify(caught instanceof Error ? caught.message : 'Could not remove SMS imports.')
-    }
-  }
-
   return (
     <div className="page-stack">
       <header className="page-header">
         <div>
-          <span className="eyebrow">Plan</span>
+          <span className="eyebrow">Money in</span>
           <h1>Cash flow</h1>
-          <p>Monthly bills, annual costs, ad-hoc entries and future plans — all in one place.</p>
+          <p>Income and savings-fund transfers. Planned spends live on the Planned spends page and appear in Month preview and the forecast.</p>
         </div>
         <div className="header-actions">
-          <button className="btn btn-outline" onClick={() => setModal({ mode: 'add', kind: 'income' })}><Plus size={16} /> Add income</button>
-          <button className="btn btn-primary" onClick={() => setModal({ mode: 'add', kind: 'expense' })}><Plus size={16} /> Add planned spend</button>
+          <button className="btn btn-primary" onClick={() => setModal({ mode: 'add', kind: 'income' })}><Plus size={16} /> Add income</button>
         </div>
       </header>
 
       <section className="stat-strip">
         <div><span>Recurring income / mo</span><strong className="positive">{formatMoney(monthlyIncome, currency)}</strong></div>
-        <div><span>Recurring spends / mo</span><strong className="negative">−{formatMoney(monthlyExpense, currency)}</strong></div>
         <div><span>To savings funds / mo</span><strong>{formatMoney(monthlySavings, currency)}</strong></div>
-        <div><span>Scheduled plans</span><strong>{scheduledCount}</strong></div>
-        <div><span>Total entries</span><strong>{data.cashFlows.length}</strong></div>
+        <div><span>Scheduled income plans</span><strong>{scheduledCount}</strong></div>
+        <div><span>Income entries</span><strong>{incomeFlows.length}</strong></div>
       </section>
 
       <section className="card">
@@ -143,18 +128,13 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
       <section className="card">
         <div className="toolbar">
           <div className="filter-tabs">
-            {(['all', 'income', 'expense', 'sms'] as Filter[]).map((option) => (
+            {(['all', 'income'] as Filter[]).map((option) => (
               <button key={option} className={filter === option ? 'filter-active' : ''} onClick={() => setFilter(option)}>
-                {option === 'all' ? 'All' : option === 'income' ? 'Income' : option === 'expense' ? 'Spends' : `SMS (${smsCount})`}
+                {option === 'all' ? 'All income' : 'Income'}
               </button>
             ))}
           </div>
-          <div className="search-box"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search entries…" /></div>
-          {smsCount > 0 && (
-            <button className="btn btn-danger btn-small" onClick={() => void handleRemoveSms()}>
-              <Trash2 size={14} /> Remove SMS imports
-            </button>
-          )}
+          <div className="search-box"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search income…" /></div>
         </div>
 
         {flows.length ? (
@@ -163,9 +143,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
               const next = nextOccurrence(flow)
               return (
                 <div className="flow-row" key={flow.id}>
-                  <span className={`flow-icon ${flow.kind}`}>
-                    {flow.kind === 'income' ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
-                  </span>
+                  <span className="flow-icon income"><ArrowDownLeft size={18} /></span>
                   <div className="flow-main">
                     <strong>{flow.name}{isSmsImport(flow) && <span className="mini-tag" title="Imported from SMS">SMS</span>}</strong>
                     <span>{flow.category} · {recurrenceLabel(flow)}{flow.interval_count > 1 && (flow.recurrence === 'every_n_months' || flow.recurrence === 'every_n_years') ? ` (${flow.interval_count})` : ''}</span>
@@ -185,17 +163,17 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
         ) : (
           <div className="empty-state">
             <CalendarDays size={30} />
-            <strong>No entries here yet</strong>
-            <span>Add a recurring bill or a one-time plan to see it in your forecast.</span>
-            <button className="btn btn-primary btn-small" onClick={() => setModal({ mode: 'add', kind: 'expense' })}>Add expense</button>
+            <strong>No income entries here yet</strong>
+            <span>Add recurring or one-off income to include it in the forecast.</span>
+            <button className="btn btn-primary btn-small" onClick={() => setModal({ mode: 'add', kind: 'income' })}>Add income</button>
           </div>
         )}
       </section>
 
       {modal && (
         <Modal
-          title={modal.mode === 'edit' ? 'Edit planned entry' : modal.kind === 'income' ? 'Add planned income' : 'Add planned spend'}
-          subtitle="Choose how often it happens so forecasts stay accurate."
+          title={modal.mode === 'edit' ? 'Edit income entry' : 'Add planned income'}
+          subtitle="Choose how often income arrives so forecasts stay accurate."
           onClose={() => setModal(null)}
           wide
         >

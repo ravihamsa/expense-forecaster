@@ -92,7 +92,7 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
   }
 
   async function handleRemoveSms() {
-    if (!window.confirm(`Remove all ${smsCount} SMS-imported actuals and their cash flows? Manual entries stay untouched.`)) return
+    if (!window.confirm(`Remove all ${smsCount} SMS-imported actuals? Manual entries stay untouched.`)) return
     try {
       await actions.deleteSmsImports()
       setFilter('all')
@@ -156,7 +156,7 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
         <div className="card-head">
           <div>
             <h2>Recorded amounts</h2>
-            <p>CSV format: <code>date,name,amount</code>. Rows must match a planned occurrence on the same date.</p>
+            <p>CSV format: <code>date,name,amount</code>. Rows match a planned occurrence by date, or by month for monthly budgets.</p>
           </div>
           <span className="status-pill pill-blue"><FileSpreadsheet size={14} /> date, name, amount</span>
         </div>

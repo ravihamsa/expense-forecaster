@@ -266,7 +266,7 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
           subtitle={modal.mode === 'contribute'
             ? `Currently ${formatMoney(modal.goal.current_amount, currency)} of ${formatMoney(modal.goal.target_amount, currency)}.`
             : modal.mode === 'move'
-              ? 'Create a planned spend with its own cash-flow entry. The savings fund is removed.'
+              ? 'Create a planned spend from the saved amount. The savings fund is removed.'
               : 'Monthly contributions appear in Cash flow, Month preview and the forecast as transfers into the fund.'}
           onClose={() => setModal(null)}
         >

@@ -146,7 +146,20 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
   }
 
   function openAction(event: FlowEvent) {
-    if (!event.canMove || event.skipped) return
+    if (event.skipped) return
+    // Budgets are planned spends, not cash flows: the only calendar action is
+    // recording the real amount against that occurrence.
+    if (event.source === 'budget') {
+      setActive(event)
+      setMode('actual')
+      setDraftDate(event.date)
+      setActualAmount(String(round(event.actualAmount ?? event.amount)))
+      setActualNote(data.actuals.find((item) => item.event_key === event.id)?.note ?? '')
+      setDeleteScope('date')
+      setDraggingId(null)
+      return
+    }
+    if (!event.canMove) return
     setActive(event)
     setMode('move')
     setDraftDate(event.date)
@@ -390,6 +403,9 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
     ? dateKey(new Date(activeMonth.year, activeMonth.monthIndex + 1, 0))
     : maxDate
   const isIncomePlan = active?.source === 'profile'
+  const availableModes = active?.source === 'budget'
+    ? MODES.filter((option) => option.value === 'actual')
+    : MODES
   const needsDate = mode === 'move' || mode === 'duplicate' || mode === 'split'
   const submitDisabled = busy || (needsDate && !draftDate)
 
@@ -397,9 +413,9 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
     <div className="page-stack">
       <header className="page-header">
         <div>
-          <span className="eyebrow">Cash-flow planner</span>
+          <span className="eyebrow">Plan & track</span>
           <h1>Calendar</h1>
-          <p>Move, duplicate, split, record or delete an income or expense. Changes flow into the forecast.</p>
+          <p>Budgeted spends appear here and can be marked with an actual amount. Income entries can also be moved, duplicated or split.</p>
         </div>
         <span className="status-pill pill-blue"><GripVertical size={14} /> Drag to reschedule</span>
       </header>
@@ -492,26 +508,28 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
                         {event.moved && <span className="calendar-moved-dot" title="Moved from its original date" />}
                       </>
                     )
-                    return event.canMove ? (
+                    const canOpen = Boolean(event.canMove) || event.source === 'budget'
+                    return canOpen ? (
                       <button
                         key={event.id}
                         data-event-id={event.id}
                         type="button"
                         className={`calendar-chip calendar-chip-${event.kind}`}
-                        draggable
+                        draggable={Boolean(event.canMove)}
                         onDragStart={(drag) => {
+                          if (!event.canMove) return
                           drag.dataTransfer.effectAllowed = 'move'
                           drag.dataTransfer.setData('text/plain', event.id)
                           setDraggingId(event.id)
                         }}
                         onDragEnd={() => { setDraggingId(null); setHoverDate(null) }}
                         onClick={() => openAction(event)}
-                        title={`${event.name} on ${longDate(event.date)} · click for options`}
+                        title={`${event.name} on ${longDate(event.date)} · ${event.source === 'budget' ? 'click to record an actual' : 'click for options'}`}
                       >
                         {content}
                       </button>
                     ) : (
-                      <div key={event.id} className={`calendar-chip calendar-chip-static calendar-chip-${event.kind}`} title={`${event.name} · loan entries cannot be rescheduled here`}>
+                      <div key={event.id} className={`calendar-chip calendar-chip-static calendar-chip-${event.kind}`} title={`${event.name} · this entry is read-only here`}>
                         {content}
                       </div>
                     )
@@ -534,7 +552,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
           <span><i className="legend-dot legend-expense" /> Expense</span>
           <span><i className="legend-dot legend-loan" /> Loan (read-only)</span>
           <span><CheckCircle2 size={12} /> Actual recorded</span>
-          <span>Click an entry for options · Drop on any highlighted date</span>
+          <span>Click a budget to record an actual · drag income to reschedule</span>
         </div>
 
         {skippedEvents.length > 0 && (
@@ -567,7 +585,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
         >
           <div className="calendar-dialog">
             <div className="segmented calendar-modes" role="group" aria-label="Calendar action">
-              {MODES.map((option) => (
+              {availableModes.map((option) => (
                 <button
                   key={option.value}
                   type="button"
@@ -668,7 +686,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
                   : mode === 'split'
                     ? 'Part of this entry becomes a one-time item on the new date; the remainder stays on the original entry.'
                     : mode === 'actual'
-                      ? 'Actuals feed your budget and money trail without changing the planned forecast.'
+                      ? 'This replaces the budgeted amount for this occurrence and drives rollover and the money trail.'
                       : deleteScope === 'date'
                         ? 'A skipped occurrence can be restored from the calendar at any time.'
                         : 'This cannot be undone. Use “just this date” if you only want one occurrence removed.'}

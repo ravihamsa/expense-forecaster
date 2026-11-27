@@ -1,10 +1,10 @@
+import { budgetEventId, budgetOccurrenceDate, budgetPeriod, standaloneActualEventId } from './budgets'
 import { fundAccountGoalId, goalFundAccountId } from './goals'
 import { monthKey, monthYearLabel } from './format'
 import { occurrencesInMonth } from './schedule'
 import type {
   Actual,
   AppData,
-  CashFlow,
   CashFlowMove,
   CashFlowSkip,
   FlowEvent,
@@ -35,8 +35,9 @@ export const DISCRETIONARY_CATEGORIES = new Set([
   'Other',
 ])
 
-export function isDiscretionary(flow: CashFlow): boolean {
-  return DISCRETIONARY_CATEGORIES.has(flow.category)
+export function isDiscretionary(value: { category: string } | string): boolean {
+  const category = typeof value === 'string' ? value : value.category
+  return DISCRETIONARY_CATEGORIES.has(category)
 }
 
 function dateKey(date: Date): string {
@@ -147,6 +148,7 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
     cashFlowMoves = [],
     cashFlowSkips = [],
     actuals = [],
+    budgets = [],
     goals = [],
     loans = [],
     loanPayments = [],
@@ -157,8 +159,10 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
   const inflation = Math.max(-50, profile.expense_inflation_pct || 0) / 100
   const today = dateKey(from)
 
-  const expenseFlows = cashFlows.filter((flow) => flow.kind === 'expense')
-  const hasDiscretionary = expenseFlows.some(isDiscretionary)
+  // Planned spends come only from budgets. Cash flows still carry income and
+  // calendar overrides; expense cash flows are migrated into budgets on load.
+  const spendableCategories = budgets.map((budget) => budget.category)
+  const hasDiscretionary = spendableCategories.some(isDiscretionary)
   const cutRate = Math.max(0, Math.min(100, opts.expenseCutPct)) / 100
 
   const overrides = new Map<string, number>()
@@ -176,6 +180,8 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
   ;(actuals ?? []).forEach((actual) => {
     actualsByKey.set(actual.event_key, actual)
   })
+  const usedActualIds = new Set<string>()
+  const budgetCarry = new Map<string, number>()
 
   const balances = new Map<string, number>()
   loans.forEach((loan) => balances.set(loan.id, Math.max(0, loan.outstanding)))
@@ -314,7 +320,10 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
       actualId: incomeActual?.id,
     })
 
+    // Income still comes from cash flows. Expense cash flows have been migrated
+    // into budgets; keeping them here would duplicate every planned spend.
     for (const flow of cashFlows) {
+      if (flow.kind !== 'income') continue
       const dates = occurrencesInMonth(flow, year, month)
       if (!dates.length) continue
       const inflated = flow.amount * inflationFactor
@@ -326,20 +335,14 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
         const targetDate = move?.to_date || originalDate
         const targetIndex = monthOffset(targetDate, from)
         if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= horizon) continue
-        const eligibleForCut = flow.kind === 'expense' && (hasDiscretionary ? isDiscretionary(flow) : true)
-        // A fixed amount for this month is exact: no inflation and no what-if trimming.
-        const amount = fixedAmount !== undefined
-          ? fixedAmount
-          : eligibleForCut
-            ? inflated * (1 - cutRate)
-            : inflated
+        const amount = fixedAmount !== undefined ? fixedAmount : inflated
         const eventId = `${flow.id}-${occurrence.getTime()}`
         const actual = actualsByKey.get(eventId)
         const eventAccount = flow.account || 'bank'
         buckets[targetIndex].events.push({
           id: eventId,
           name: flow.name,
-          kind: flow.kind,
+          kind: 'income',
           amount,
           category: flow.category,
           account: eventAccount,
@@ -355,14 +358,92 @@ export function simulate(data: AppData, options: SimulationOptions = DEFAULT_OPT
           actualAmount: actual?.amount,
           actualId: actual?.id,
         })
-        if (flow.kind === 'income') {
-          buckets[targetIndex].income += amount
-          addDelta(buckets[targetIndex].deltas, eventAccount, amount)
-        } else {
-          buckets[targetIndex].expenses += amount
-          addDelta(buckets[targetIndex].deltas, eventAccount, -amount)
-        }
+        buckets[targetIndex].income += amount
+        addDelta(buckets[targetIndex].deltas, eventAccount, amount)
       }
+    }
+
+    // Budgets are the only future spend source. Unused monthly amounts and
+    // overspends carry forward only when that budget's rollover toggle is on.
+    for (const budget of budgets) {
+      const occurrence = budgetOccurrenceDate(budget, { key: currentKey, year, monthIndex: month })
+      if (!occurrence) continue
+      const period = budgetPeriod(budget)
+      const limit = Math.max(0, Number(budget.monthly_limit) || 0)
+      const eventId = budgetEventId(budget, occurrence)
+      const actual = actualsByKey.get(eventId)
+      if (actual) usedActualIds.add(actual.id)
+      const cut = hasDiscretionary ? (isDiscretionary(budget.category) ? 1 - cutRate : 1) : 1 - cutRate
+      const plannedBase = limit * inflationFactor * cut
+      let eventAmount = 0
+
+      if (period === 'monthly') {
+        const carry = budget.rollover
+          ? Math.max(-limit * 12, budgetCarry.get(budget.id) ?? 0)
+          : 0
+        if (actual) {
+          // A recorded amount replaces the placeholder for this occurrence and
+          // its difference from the budget becomes the next month's carry.
+          const available = Math.max(0, limit + carry)
+          eventAmount = Math.max(0, Number(actual.amount) || 0)
+          budgetCarry.set(budget.id, budget.rollover ? available - eventAmount : 0)
+        } else {
+          // Positive carry stays available until it is actually spent. Negative
+          // carry is absorbed by future allocations until it is worked off.
+          eventAmount = Math.max(0, plannedBase + Math.min(0, carry)) + Math.max(0, carry)
+          const nextCarry = carry < 0
+            ? Math.min(0, carry + plannedBase)
+            : carry
+          budgetCarry.set(budget.id, budget.rollover ? nextCarry : 0)
+        }
+      } else {
+        eventAmount = actual ? Math.max(0, actual.amount) : plannedBase
+      }
+      if (eventAmount <= 0.005 && !actual) continue
+
+      buckets[i].events.push({
+        id: eventId,
+        name: budget.name?.trim() || budget.category,
+        kind: 'expense',
+        amount: eventAmount,
+        category: budget.category,
+        account: 'bank',
+        source: 'budget',
+        budgetId: budget.id,
+        date: occurrence,
+        sourceMonth: currentKey,
+        actualAmount: actual?.amount,
+        actualId: actual?.id,
+        canMove: false,
+      })
+      buckets[i].expenses += eventAmount
+      addDelta(buckets[i].deltas, 'bank', -eventAmount)
+    }
+  }
+
+  for (let i = 0; i < horizon; i += 1) {
+    // Recorded spends with no plan still move money, but they are not future
+    // plans and never appear as a budgeted amount.
+    for (const actual of actuals) {
+      if (usedActualIds.has(actual.id) || actual.kind !== 'expense') continue
+      if (monthOffset(actual.date, from) !== i) continue
+      const amount = Math.max(0, Number(actual.amount) || 0)
+      if (amount <= 0) continue
+      buckets[i].events.push({
+        id: standaloneActualEventId(actual.id),
+        name: actual.name || actual.category || 'Recorded spend',
+        kind: 'expense',
+        amount,
+        category: actual.category || 'Other',
+        account: actual.account || 'bank',
+        source: 'actual',
+        date: actual.date,
+        actualAmount: amount,
+        actualId: actual.id,
+        canMove: false,
+      })
+      buckets[i].expenses += amount
+      addDelta(buckets[i].deltas, actual.account, -amount)
     }
   }
 

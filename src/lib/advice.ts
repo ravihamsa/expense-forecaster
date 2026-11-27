@@ -1,26 +1,10 @@
+import { budgetPeriod } from './budgets'
 import { formatMoney, formatPercent } from './format'
 import { expectedMonthlyIncome, isDiscretionary, loanPayoffMonths, loanTotalInterest, simulate } from './projections'
-import type { Advice, AppData, CashFlow, Simulation, SimulationOptions } from './types'
-
-function monthlyEquivalent(flow: CashFlow, horizon: number): number {
-  switch (flow.recurrence) {
-    case 'monthly':
-      return flow.amount
-    case 'yearly':
-      return flow.amount / 12
-    case 'every_n_months':
-      return flow.amount / Math.max(1, flow.interval_count)
-    case 'every_n_years':
-      return flow.amount / (12 * Math.max(1, flow.interval_count))
-    case 'one_time':
-      return flow.amount / Math.max(1, horizon)
-    default:
-      return 0
-  }
-}
+import type { Advice, AppData, Simulation, SimulationOptions } from './types'
 
 export function buildAdvice(data: AppData, base: Simulation): Advice[] {
-  const { profile, cashFlows, loans } = data
+  const { profile, loans } = data
   const currency = profile.currency || 'INR'
   const money = (value: number) => formatMoney(value, currency)
   const advice: Advice[] = []
@@ -38,9 +22,14 @@ export function buildAdvice(data: AppData, base: Simulation): Advice[] {
     })
   }
 
-  const discretionaryMonthly = cashFlows
-    .filter((flow) => flow.kind === 'expense' && isDiscretionary(flow))
-    .reduce((sum, flow) => sum + monthlyEquivalent(flow, profile.horizon_months), 0)
+  const discretionaryMonthly = data.budgets
+    .filter((budget) => isDiscretionary(budget.category))
+    .reduce((sum, budget) => {
+      const period = budgetPeriod(budget)
+      if (period === 'monthly') return sum + Math.max(0, budget.monthly_limit)
+      if (period === 'yearly') return sum + Math.max(0, budget.monthly_limit) / 12
+      return sum
+    }, 0)
 
   if (base.deficitMonths > 0) {
     const neededPerMonth = base.totalDeficit / base.deficitMonths
@@ -57,7 +46,7 @@ export function buildAdvice(data: AppData, base: Simulation): Advice[] {
       detail: `Your first shortfall is ${firstDeficit?.label ?? 'soon'}, about ${money(neededPerMonth)} per affected month. Trimming ${cutPct}% from flexible categories like Shopping, Dining and Subscriptions would close the gap.`,
       impact: `${base.deficitMonths} deficit months → ${trimmed.deficitMonths}, balance ${money(trimmed.endingBalance - base.endingBalance)} better`,
       tone: 'warn',
-      action: { label: 'Review expenses', tab: 'cashflows' },
+      action: { label: 'Review planned spends', tab: 'budgets' },
     })
   } else if (averageIncome > 0) {
     advice.push({

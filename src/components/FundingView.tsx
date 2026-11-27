@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight, Wallet } from 'lucide-react'
 import { formatMoney, formatSigned } from '../lib/format'
-import type { AppData, FlowEvent, MonthProjection, Simulation } from '../lib/types'
+import { budgetPeriod } from '../lib/budgets'
+import type { AppData, Budget, FlowEvent, MonthProjection, Simulation } from '../lib/types'
 
 interface Props {
   data: AppData
@@ -42,8 +43,17 @@ const BUCKET_LABELS: Record<BucketKey, string> = {
 
 const BUCKET_ORDER: BucketKey[] = ['monthly', 'yearly', 'one_time', 'savings', 'loans', 'other']
 
-function bucketKey(event: FlowEvent, flowsById: Map<string, AppData['cashFlows'][number]>): BucketKey {
+function bucketKey(
+  event: FlowEvent,
+  budgetsById: Map<string, Budget>,
+  flowsById: Map<string, AppData['cashFlows'][number]>,
+): BucketKey {
   if (event.source === 'loan' || event.source === 'extra_payment') return 'loans'
+  const budget = event.budgetId ? budgetsById.get(event.budgetId) : undefined
+  if (budget) {
+    const period = budgetPeriod(budget)
+    return period === 'monthly' || period === 'yearly' || period === 'one_time' ? period : 'other'
+  }
   const flow = event.cashFlowId ? flowsById.get(event.cashFlowId) : undefined
   if (!flow) return 'other'
   if (flow.recurrence === 'monthly') return 'monthly'
@@ -57,6 +67,10 @@ export default function FundingView({ data, simulation, currency }: Props) {
   const flowsById = useMemo(
     () => new Map((data.cashFlows ?? []).map((flow) => [flow.id, flow])),
     [data.cashFlows],
+  )
+  const budgetsById = useMemo(
+    () => new Map((data.budgets ?? []).map((budget) => [budget.id, budget])),
+    [data.budgets],
   )
 
   const rows = useMemo<FundingRow[]>(
@@ -76,7 +90,7 @@ export default function FundingView({ data, simulation, currency }: Props) {
       })
 
       month.events.filter((event) => event.kind === 'expense').forEach((event) => {
-        const key = bucketKey(event, flowsById)
+        const key = bucketKey(event, budgetsById, flowsById)
         const bucket = buckets.get(key)!
         bucket.planned += event.amount
         bucket.recorded += event.actualAmount ?? 0
@@ -98,7 +112,7 @@ export default function FundingView({ data, simulation, currency }: Props) {
         buckets: BUCKET_ORDER.map((key) => buckets.get(key)!).filter((bucket) => bucket.planned > 0),
       }
     }),
-    [simulation.months, flowsById],
+    [simulation.months, budgetsById, flowsById],
   )
 
   const current = rows[0]

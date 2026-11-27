@@ -1,6 +1,7 @@
 import { budgetKey } from './budgets'
 import { defaultCategories, defaultCategoryId } from './categories'
 import { goalFundAccountId } from './goals'
+import { planBudgetOnlyMigration, type BudgetOnlyMigration } from './migrate'
 import { toDateInputValue } from './schedule'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
 import type {
@@ -452,6 +453,52 @@ function normalizeData(data: AppData): AppData {
   }
 }
 
+async function persistBudgetOnlyMigration(user: AuthUser, migration: BudgetOnlyMigration): Promise<void> {
+  if (!usingSupabase || !supabase) return
+  for (const budget of migration.addedBudgets) {
+    const { id: _id, created_at: _created, cash_flow_id: _link, ...row } = budget
+    void _id
+    void _created
+    void _link
+    const { error } = await supabase.from('budgets').insert(row)
+    if (error) throw error
+  }
+  for (const id of migration.clearedBudgetLinks) {
+    const { error } = await supabase
+      .from('budgets')
+      .update({ cash_flow_id: null })
+      .eq('id', id)
+      .eq('user_id', user.id)
+    if (error && !error.message.toLowerCase().includes('cash_flow_id')) throw error
+  }
+  for (const actual of migration.updatedActuals) {
+    const { error } = await supabase
+      .from('actuals')
+      .update({ event_key: actual.event_key })
+      .eq('id', actual.id)
+      .eq('user_id', user.id)
+    if (error) throw error
+    // Older schemas may not have the deprecated link column yet. The stable
+    // event key is what matters, so a missing column is safe to ignore.
+    const { error: linkError } = await supabase
+      .from('actuals')
+      .update({ cash_flow_id: null })
+      .eq('id', actual.id)
+      .eq('user_id', user.id)
+    if (linkError && !linkError.message.toLowerCase().includes('cash_flow_id')) throw linkError
+  }
+  for (const table of ['cash_flow_overrides', 'cash_flow_moves', 'cash_flow_skips'] as const) {
+    for (const id of migration.deletedCashFlowIds) {
+      const { error } = await supabase.from(table).delete().eq('user_id', user.id).eq('cash_flow_id', id)
+      if (error && !isMissingTable(error.code)) throw error
+    }
+  }
+  for (const id of migration.deletedCashFlowIds) {
+    const { error } = await supabase.from('cash_flows').delete().eq('id', id).eq('user_id', user.id)
+    if (error) throw error
+  }
+}
+
 export async function loadData(user: AuthUser): Promise<AppData> {
   if (usingSupabase && supabase) {
     const [
@@ -513,7 +560,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       const { error } = await supabase.from('profiles').insert(newProfile)
       if (error) throw error
     }
-    return normalizeData({
+    const normalized = normalizeData({
       profile,
       categories: (categoriesResult.error ? undefined : categoriesResult.data) as unknown as AppCategory[],
       accounts: accountsResult.error ? [] : (accountsResult.data ?? []) as unknown as Account[],
@@ -548,13 +595,18 @@ export async function loadData(user: AuthUser): Promise<AppData> {
         (row) => ensureNumbers(row as unknown as Record<string, unknown>) as unknown as LoanPayment,
       ),
     })
+    const migration = planBudgetOnlyMigration(normalized)
+    if (migration.changed) await persistBudgetOnlyMigration(user, migration)
+    return migration.data
   }
 
   const stored = readJSON<AppData | null>(KEYS.data(user.id), null)
-  if (stored?.profile) return normalizeData(stored)
-  const fresh = defaultData(user.id, user.name)
-  writeJSON(KEYS.data(user.id), fresh)
-  return fresh
+  const normalized = normalizeData(stored?.profile
+    ? stored
+    : defaultData(user.id, user.name))
+  const migration = planBudgetOnlyMigration(normalized)
+  if (!stored?.profile || migration.changed) writeJSON(KEYS.data(user.id), migration.data)
+  return migration.data
 }
 
 async function updateLocal(user: AuthUser, updater: (data: AppData) => AppData): Promise<void> {
@@ -1071,27 +1123,8 @@ function normalizeBudgetInput(input: BudgetInput): BudgetInput {
     period: input.period === 'yearly' || input.period === 'one_time' ? input.period : 'monthly',
     start_date: input.start_date || '1970-01-01',
     name: (input.name ?? '').trim(),
-    cash_flow_id: input.cash_flow_id ?? null,
+    cash_flow_id: null,
     rollover: input.period === 'yearly' || input.period === 'one_time' ? false : input.rollover !== false,
-  }
-}
-
-function budgetCashFlowInput(input: BudgetInput, existing?: CashFlow): CashFlowInput {
-  const period = input.period ?? 'monthly'
-  const startDate = period === 'monthly'
-    ? existing?.start_date || `${toDateInputValue().slice(0, 7)}-01`
-    : input.start_date || existing?.start_date || toDateInputValue()
-  return {
-    kind: 'expense',
-    name: (input.name ?? '').trim() || input.category,
-    amount: Math.max(0, Number(input.monthly_limit) || 0),
-    category: input.category,
-    account: existing?.account || 'bank',
-    recurrence: period === 'yearly' ? 'yearly' : period === 'one_time' ? 'one_time' : 'monthly',
-    interval_count: 1,
-    start_date: startDate,
-    end_date: null,
-    note: existing?.note || 'Planned spend',
   }
 }
 
@@ -1109,59 +1142,39 @@ async function findBudget(user: AuthUser, id: string): Promise<Budget | undefine
   return (await loadData(user)).budgets.find((budget) => budget.id === id)
 }
 
-async function findCashFlowForBudget(user: AuthUser, id: string): Promise<CashFlow | undefined> {
-  if (usingSupabase && supabase) {
-    const { data, error } = await supabase
-      .from('cash_flows')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .maybeSingle()
-    if (error) throw error
-    return (data ?? undefined) as CashFlow | undefined
-  }
-  return (await loadData(user)).cashFlows.find((flow) => flow.id === id)
-}
-
 async function writeBudget(
   user: AuthUser,
   input: BudgetInput,
   mode: 'insert' | 'upsert',
 ): Promise<Budget> {
-  const clean = normalizeBudgetInput(input)
-  const flow = await addCashFlow(user, budgetCashFlowInput(clean))
+  const clean = normalizeBudgetInput({ ...input, cash_flow_id: null })
   const row: Budget = {
     ...clean,
-    cash_flow_id: flow.id,
     id: makeId(),
     user_id: user.id,
   }
-  try {
-    if (usingSupabase && supabase) {
-      const { id: _id, created_at: _created, ...insertRow } = row
-      void _id
-      void _created
-      const query = supabase.from('budgets')
-      const { data, error } = mode === 'insert'
-        ? await query.insert(insertRow).select().single()
-        : await query.upsert(insertRow, { onConflict: 'user_id,category,period,start_date' }).select().single()
-      if (error) throw error
-      return ensureNumbers(data as unknown as Record<string, unknown>) as unknown as Budget
-    }
-    await updateLocal(user, (current) => ({
-      ...current,
-      budgets: [
-        row,
-        ...(mode === 'insert'
-          ? current.budgets
-          : current.budgets.filter((budget) => budgetKey(budget) !== budgetKey(row))),
-      ].sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
-    }))
-    return row
-  } catch (caught) {
-    await deleteCashFlow(user, flow.id).catch(() => undefined)
-    throw caught
+  if (usingSupabase && supabase) {
+    const { id: _id, created_at: _created, cash_flow_id: _link, ...insertRow } = row
+    void _id
+    void _created
+    void _link
+    const query = supabase.from('budgets')
+    const { data, error } = mode === 'insert'
+      ? await query.insert(insertRow).select().single()
+      : await query.upsert(insertRow, { onConflict: 'user_id,category,period,start_date' }).select().single()
+    if (error) throw error
+    return ensureNumbers(data as unknown as Record<string, unknown>) as unknown as Budget
   }
+  await updateLocal(user, (current) => ({
+    ...current,
+    budgets: [
+      row,
+      ...(mode === 'insert'
+        ? current.budgets
+        : current.budgets.filter((budget) => budgetKey(budget) !== budgetKey(row))),
+    ].sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
+  }))
+  return row
 }
 
 export async function addBudget(user: AuthUser, input: BudgetInput): Promise<Budget> {
@@ -1175,69 +1188,53 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
 export async function updateBudget(user: AuthUser, id: string, patch: Partial<BudgetInput>): Promise<void> {
   const current = await findBudget(user, id)
   if (!current) throw new Error('That planned spend no longer exists.')
-  const merged = normalizeBudgetInput({ ...current, ...patch })
-
-  let cashFlowId = current.cash_flow_id || null
-  let createdFlowId: string | null = null
-  const existingFlow = cashFlowId ? await findCashFlowForBudget(user, cashFlowId) : undefined
-  if (cashFlowId && existingFlow) {
-    await updateCashFlow(user, cashFlowId, budgetCashFlowInput(merged, existingFlow))
-  } else {
-    const flow = await addCashFlow(user, budgetCashFlowInput(merged))
-    cashFlowId = flow.id
-    createdFlowId = flow.id
+  const merged = normalizeBudgetInput({ ...current, ...patch, cash_flow_id: null })
+  const budgetPatch: Partial<BudgetInput> = {
+    category: merged.category,
+    name: merged.name,
+    monthly_limit: merged.monthly_limit,
+    period: merged.period,
+    start_date: merged.start_date,
+    rollover: merged.rollover,
   }
-
-  const budgetPatch: Partial<BudgetInput> = { ...patch, cash_flow_id: cashFlowId }
-  try {
-    if (usingSupabase && supabase) {
-      const { error } = await supabase.from('budgets').update(budgetPatch).eq('id', id).eq('user_id', user.id)
-      if (error) throw error
-      return
-    }
-    await updateLocal(user, (data) => ({
-      ...data,
-      budgets: data.budgets
-        .map((budget) => {
-          if (budget.id !== id) return budget
-          const updated = normalizeBudgetInput({ ...budget, ...budgetPatch })
-          return {
-            ...updated,
+  if (usingSupabase && supabase) {
+    const { error } = await supabase.from('budgets').update(budgetPatch).eq('id', id).eq('user_id', user.id)
+    if (error) throw error
+    return
+  }
+  await updateLocal(user, (data) => ({
+    ...data,
+    budgets: data.budgets
+      .map((budget) => (budget.id === id
+        ? {
+            ...merged,
             id: budget.id,
             user_id: budget.user_id,
+            cash_flow_id: null,
             created_at: budget.created_at,
           }
-        })
-        .sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
-    }))
-  } catch (caught) {
-    if (createdFlowId) await deleteCashFlow(user, createdFlowId).catch(() => undefined)
-    throw caught
-  }
+        : budget))
+      .sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
+  }))
 }
 
 export async function deleteBudget(user: AuthUser, id: string): Promise<void> {
-  const current = await findBudget(user, id)
-  const cashFlowId = current?.cash_flow_id || null
   if (usingSupabase && supabase) {
     const { error } = await supabase.from('budgets').delete().eq('id', id).eq('user_id', user.id)
     if (error) throw error
-    if (cashFlowId) {
-      const { error: actualError } = await supabase
-        .from('actuals')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('cash_flow_id', cashFlowId)
-      if (actualError) throw actualError
-      await deleteCashFlow(user, cashFlowId)
-    }
+    const { error: actualError } = await supabase
+      .from('actuals')
+      .delete()
+      .eq('user_id', user.id)
+      .like('event_key', `budget-${id}-%`)
+    if (actualError) throw actualError
     return
   }
   await updateLocal(user, (data) => ({
     ...data,
     budgets: data.budgets.filter((budget) => budget.id !== id),
+    actuals: data.actuals.filter((actual) => !actual.event_key.startsWith(`budget-${id}-`)),
   }))
-  if (cashFlowId) await deleteCashFlow(user, cashFlowId)
 }
 
 export async function upsertGoal(user: AuthUser, input: GoalInput): Promise<Goal> {

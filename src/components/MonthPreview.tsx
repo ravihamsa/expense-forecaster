@@ -141,12 +141,26 @@ export default function MonthPreview({
     const override = findOverride(event)
     const editing = editable && editingId === event.id
     const canReset = isIncome ? Boolean(incomeEntry) : Boolean(override)
+    const sourceLabel = isLoan
+      ? 'Loan'
+      : event.source === 'budget'
+        ? 'Planned spend'
+        : event.source === 'actual'
+          ? 'Recorded spend'
+          : isIncome
+            ? incomeEntry ? 'Planned this month' : hasEarlierIncome ? 'Carried forward' : 'Not set'
+            : ''
 
     const detail = editing
       ? isIncome
         ? `Set for ${month.label} only · now ${formatMoney(event.amount, currency)}`
         : `Custom amount ${formatMoney(customAmount(event), currency)}`
-      : `${event.category}${isLoan ? ' · Loan' : ''}${isIncome ? (incomeEntry ? ' · Planned this month' : hasEarlierIncome ? ' · Carried forward' : ' · Not set') : ''}${override ? ' · Fixed amount' : ''}`
+      : [
+          event.category,
+          sourceLabel,
+          override ? 'Fixed amount' : '',
+          event.actualAmount !== undefined && event.source !== 'actual' ? 'Actual recorded' : '',
+        ].filter(Boolean).join(' · ')
 
     return (
       <div className={`preview-row ${editing ? 'preview-row-editing' : ''}`} key={event.id}>
@@ -206,7 +220,7 @@ export default function MonthPreview({
       <div className="card-head">
         <div>
           <h2>Month preview</h2>
-          <p>Every planned cash flow on its actual date · edit monthly income or any month's amount inline</p>
+          <p>Budgeted spends on their dates · recorded amounts replace the plan · income and its monthly amount stay editable</p>
         </div>
         <div className="preview-controls">
           <span className={`status-pill ${month.spendableBalance >= 0 ? 'pill-green' : 'pill-red'}`}>
@@ -256,7 +270,7 @@ export default function MonthPreview({
           </div>
           {outgoing.length
             ? outgoing.map(renderEvent)
-            : <p className="preview-empty">Nothing scheduled to pay this month.</p>}
+            : <p className="preview-empty">No planned spends or recorded spends this month.</p>}
           {month.savingsEvents.length > 0 && (
             <>
               <div className="preview-column-head preview-subhead">

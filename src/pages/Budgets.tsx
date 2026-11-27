@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Link2, Pencil, Plus, Repeat, Trash2, Wallet } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pencil, Plus, Repeat, Trash2, Wallet } from 'lucide-react'
 import Modal from '../components/Modal'
 import { budgetPeriodLabel, budgetTitle, buildBudgetStatuses } from '../lib/budgets'
 import type { BudgetExpense } from '../lib/budgets'
@@ -69,7 +69,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
   const statuses = useMemo(() => buildBudgetStatuses(data, simulation.months), [data, simulation.months])
   const futurePlans = useMemo(
     () => simulation.months.flatMap((month) => month.events
-      .filter((event) => event.kind === 'expense' && event.source === 'cash_flow' && event.date > today)
+      .filter((event) => event.kind === 'expense' && event.source === 'budget' && event.date > today)
       .map((event) => ({ event, monthLabel: month.monthLabel }))),
     [simulation.months, today],
   )
@@ -139,15 +139,6 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
     }
   }
 
-  async function syncPlan(budget: Budget) {
-    try {
-      await actions.updateBudget(budget.id, {})
-      onNotify('Added to Cash flow and Month preview.')
-    } catch (caught) {
-      onNotify(caught instanceof Error ? caught.message : 'Could not add this plan to Cash flow.')
-    }
-  }
-
   const activePeriod = form.period ?? 'monthly'
 
   return (
@@ -180,7 +171,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
         <div className="card-head">
           <div>
             <h2>Planned spends</h2>
-            <p>Monthly plans use the planned amount until a real spend is recorded. Yearly and one-off plans count only recorded spends, so a future plan is never shown as spent.</p>
+            <p>Budgets are the planned spends in Month preview and the forecast. Unused monthly amounts roll forward when enabled; a recorded spend replaces the plan.</p>
           </div>
           <span className={`status-pill ${overCount > 0 ? 'pill-red' : 'pill-teal'}`}>
             {overCount > 0 ? `${overCount} over plan` : 'On track'}
@@ -217,7 +208,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                       <strong>{name}</strong>
                       <span>
                         {subtitle}
-                        {!status.budget.cash_flow_id ? ' · add to Cash flow' : !first?.active ? ' · not in forecast window' : ''}
+                        {!first?.active ? ' · not in forecast window' : ''}
                       </span>
                     </div>
                     <strong className="budget-limit">
@@ -236,9 +227,6 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                       {formatSigned(status.currentRemaining, currency)}
                     </strong>
                     <div className="row-actions">
-                      {!status.budget.cash_flow_id && (
-                        <button className="icon-button" title="Add to Cash flow" onClick={() => void syncPlan(status.budget)}><Link2 size={16} /></button>
-                      )}
                       <button className="icon-button" title="Edit plan" onClick={() => openEdit(status.budget)}><Pencil size={16} /></button>
                       <button className="icon-button danger" title="Delete plan" onClick={() => void remove(status.budget)}><Trash2 size={16} /></button>
                     </div>
@@ -288,8 +276,8 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
       <section className="card">
         <div className="card-head">
           <div>
-            <h2>One-off plans ahead</h2>
-            <p>Every expense dated after today appears here. Record the real amount from Recorded spends when it happens.</p>
+            <h2>Upcoming planned spends</h2>
+            <p>Every budget occurrence after today appears here. Record the real amount from Recorded spends when it happens.</p>
           </div>
           <span className="status-pill">{futurePlans.length} planned · {formatMoney(futureTotal, currency)}</span>
         </div>
@@ -313,8 +301,8 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
         ) : (
           <div className="empty-state">
             <Wallet size={26} />
-            <strong>No one-off plans yet</strong>
-            <span>Add a one-off expense in Cash flow for a future date and it will show up here.</span>
+            <strong>No upcoming plans yet</strong>
+            <span>Add a planned spend on this page and it will show up here.</span>
           </div>
         )}
         {futurePlans.length > 0 && (

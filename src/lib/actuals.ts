@@ -43,7 +43,9 @@ function parseCsvLine(line: string): string[] {
  * occurrences already in the forecast, so imported amounts keep stable keys.
  */
 export function parseActualCsv(text: string, months: MonthProjection[]): { rows: NewActual[]; unmatched: string[] } {
-  const events = months.flatMap((month) => month.events)
+  // Standalone recorded spends already represent themselves; only planned
+  // occurrences can receive an imported actual.
+  const events = months.flatMap((month) => month.events).filter((event) => event.source !== 'actual')
   const rows: NewActual[] = []
   const unmatched: string[] = []
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
@@ -58,9 +60,21 @@ export function parseActualCsv(text: string, months: MonthProjection[]): { rows:
     const date = cells[0] ?? ''
     const name = cells[1] ?? ''
     const amount = Number(cells[2] ?? '')
-    const normalizedName = name.toLowerCase()
-    const match = events.find((event) => event.date === date && event.name.toLowerCase() === normalizedName)
-      ?? events.find((event) => event.date === date && event.name.toLowerCase().includes(normalizedName))
+    const normalizedName = name.trim().toLowerCase()
+    const sameDay = events.filter((event) => event.date === date)
+    const sameMonth = events.filter((event) => event.date.slice(0, 7) === date.slice(0, 7))
+    const namesMatch = (event: FlowEvent): boolean => {
+      if (!normalizedName) return false
+      const eventName = event.name.toLowerCase()
+      return eventName === normalizedName || eventName.includes(normalizedName) || normalizedName.includes(eventName)
+    }
+    // Monthly budgets land on the first of the month, so a real spend on any
+    // day of that month still needs to find its plan.
+    const match = sameDay.find(namesMatch)
+      ?? sameDay.find((event) => event.category.toLowerCase() === normalizedName)
+      ?? (!normalizedName ? sameDay[0] : undefined)
+      ?? sameMonth.find(namesMatch)
+      ?? sameMonth.find((event) => event.category.toLowerCase() === normalizedName)
     if (!match || !Number.isFinite(amount) || amount < 0) {
       unmatched.push(line)
       continue
