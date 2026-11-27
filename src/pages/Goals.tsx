@@ -121,11 +121,11 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
       <header className="page-header">
         <div>
           <span className="eyebrow">Plan</span>
-          <h1>Goals & sinking funds</h1>
+          <h1>Savings funds</h1>
           <p>Track progress toward a target and check whether your monthly contributions fit the forecast.</p>
         </div>
         <div className="header-actions">
-          <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Add goal</button>
+          <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Add fund</button>
         </div>
       </header>
 
@@ -157,9 +157,9 @@ export default function Goals({ data, actions, simulation, currency, onNotify }:
         <section className="card">
           <div className="empty-state">
             <Target size={30} />
-            <strong>No goals yet</strong>
+            <strong>No savings funds yet</strong>
             <span>Save for an emergency fund, a trip or a big purchase, and see the monthly amount you need.</span>
-            <button className="btn btn-primary btn-small" onClick={openAdd}>Add goal</button>
+            <button className="btn btn-primary btn-small" onClick={openAdd}>Add fund</button>
           </div>
         </section>
       )}

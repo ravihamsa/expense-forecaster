@@ -23,6 +23,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import FundingView from '../components/FundingView'
 import MonthPreview from '../components/MonthPreview'
 import { formatCompact, formatMoney, formatSigned, monthKey, shortMonthLabel } from '../lib/format'
 import { summarizeLoans } from '../lib/loans'
@@ -56,8 +57,8 @@ function ForecastTooltip({
       <strong>{month.label}</strong>
       <div><span>Net cash flow</span><b className={month.net >= 0 ? 'positive' : 'negative'}>{formatSigned(month.net, currency)}</b></div>
       <div><span>Closing balance</span><b>{formatMoney(month.closingBalance, currency)}</b></div>
-      <div><span>Income + repayments in</span><b>{formatMoney(month.income + month.loanInflows, currency)}</b></div>
-      <div><span>Outgoings</span><b>{formatMoney(month.expenses + month.loanPayments, currency)}</b></div>
+      <div><span>Planned income</span><b>{formatMoney(month.income + month.loanInflows, currency)}</b></div>
+      <div><span>Planned spends</span><b>{formatMoney(month.expenses + month.loanPayments, currency)}</b></div>
     </div>
   )
 }
@@ -153,8 +154,8 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
           <p>Here is the next {profile.horizon_months} months of your money at a glance.</p>
         </div>
         <div className="header-actions">
-          <button className="btn btn-outline" onClick={() => onAdd('income')}><Plus size={16} /> Income</button>
-          <button className="btn btn-outline" onClick={() => onAdd('expense')}><Plus size={16} /> Expense</button>
+          <button className="btn btn-outline" onClick={() => onAdd('income')}><Plus size={16} /> Planned income</button>
+          <button className="btn btn-outline" onClick={() => onAdd('expense')}><Plus size={16} /> Planned spend</button>
           <button className="btn btn-primary" onClick={onAddLoan}><Landmark size={16} /> Loan</button>
         </div>
       </header>
@@ -178,21 +179,21 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
       <section className="kpi-grid">
         <article className="kpi-card">
           <div className="kpi-icon kpi-teal"><ArrowUpRight size={19} /></div>
-          <span className="kpi-label">Income this month</span>
+          <span className="kpi-label">Planned income</span>
           <strong className="kpi-value">{formatMoney(plannedIncome, currency)}</strong>
-          <span className="kpi-foot">{simulation.months[0]?.label ?? 'Current month'} · planned take-home</span>
+          <span className="kpi-foot">{simulation.months[0]?.label ?? 'Current month'} · salary and other income</span>
         </article>
         <article className="kpi-card">
           <div className="kpi-icon kpi-blue"><ArrowDownRight size={19} /></div>
-          <span className="kpi-label">Monthly outgoings</span>
+          <span className="kpi-label">Planned spends</span>
           <strong className="kpi-value">{formatMoney(monthlyExpenses, currency)}</strong>
-          <span className="kpi-foot">Bills + EMIs, averaged</span>
+          <span className="kpi-foot">This month's plan, including EMIs</span>
         </article>
         <article className="kpi-card">
           <div className={`kpi-icon ${netMonthly >= 0 ? 'kpi-green' : 'kpi-red'}`}><TrendingUp size={19} /></div>
-          <span className="kpi-label">Net each month</span>
+          <span className="kpi-label">Needed / free</span>
           <strong className={`kpi-value ${netMonthly >= 0 ? 'positive' : 'negative'}`}>{formatSigned(netMonthly, currency)}</strong>
-          <span className="kpi-foot">Income + repayments in − commitments</span>
+          <span className="kpi-foot">Extra needed, or free for unplanned spends</span>
         </article>
         <article className="kpi-card">
           <div className="kpi-icon kpi-amber"><Landmark size={19} /></div>
@@ -211,6 +212,8 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
           </span>
         </article>
       </section>
+
+      <FundingView data={data} simulation={simulation} currency={currency} />
 
       <section className="card chart-card">
         <div className="card-head">
@@ -273,8 +276,8 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
         <section className="card">
           <div className="card-head">
             <div>
-              <h2>Months to watch</h2>
-              <p>Deficits before they arrive</p>
+              <h2>Months needing extra funds</h2>
+              <p>Where planned spends exceed planned income</p>
             </div>
             <span className={`status-pill ${deficitMonths.length ? 'pill-red' : 'pill-green'}`}>
               {deficitMonths.length ? `${deficitMonths.length} found` : 'All clear'}
@@ -295,14 +298,14 @@ export default function Dashboard({ data, simulation, actions, onNotify, onNavig
           ) : (
             <div className="empty-state compact">
               <PiggyBank size={26} />
-              <strong>No deficits forecast</strong>
-              <span>Your planned income covers every scheduled outflow.</span>
+              <strong>No extra funds needed</strong>
+              <span>Your planned income covers every planned spend.</span>
             </div>
           )}
 
           {surplusMonths.length > 0 && (
             <div className="surplus-block">
-              <span className="mini-subhead">Surplus months ahead</span>
+              <span className="mini-subhead">Free money ahead</span>
               {surplusMonths.slice(0, 3).map((month) => (
                 <div className="mini-row" key={`surplus-${month.key}`}>
                   <span className="date-chip"><TrendingUp size={15} /> {month.monthLabel}</span>

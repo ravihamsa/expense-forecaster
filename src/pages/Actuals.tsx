@@ -124,7 +124,7 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
       <header className="page-header">
         <div>
           <span className="eyebrow">Track</span>
-          <h1>Planned vs actual</h1>
+          <h1>Recorded spends</h1>
           <p>Record what really happened for each planned occurrence and compare it with your forecast.</p>
         </div>
         <div className="header-actions">
@@ -141,7 +141,7 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
           <button className="btn btn-outline" disabled={busy || !events.length} onClick={() => fileRef.current?.click()}>
             <Upload size={16} /> Import CSV
           </button>
-          <button className="btn btn-primary" disabled={!pending.length} onClick={openAdd}><Plus size={16} /> Record actual</button>
+          <button className="btn btn-primary" disabled={!pending.length} onClick={openAdd}><Plus size={16} /> Record spend</button>
         </div>
       </header>
 
@@ -199,7 +199,7 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
             <CheckCircle2 size={30} />
             <strong>No actuals here</strong>
             <span>Record an amount from the calendar or add one here to compare it with the plan.</span>
-            <button className="btn btn-primary btn-small" disabled={!pending.length} onClick={openAdd}>Record actual</button>
+            <button className="btn btn-primary btn-small" disabled={!pending.length} onClick={openAdd}>Record spend</button>
           </div>
         )}
       </section>

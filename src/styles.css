@@ -613,6 +613,66 @@ p { margin: 0; }
 .calendar-dialog .helper-text { margin: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 
+/* ------------------------------ Funding view ------------------------------ */
+
+.funding-card { display: flex; flex-direction: column; }
+.funding-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 1fr);
+  gap: 18px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border-soft);
+  margin-bottom: 16px;
+}
+.funding-short { background: rgba(255, 107, 107, 0.07); border-color: rgba(255, 107, 107, 0.28); }
+.funding-surplus { background: rgba(45, 212, 167, 0.07); border-color: rgba(45, 212, 167, 0.26); }
+.funding-hero-main { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.funding-hero-main > svg { flex: none; margin-top: 3px; }
+.funding-short .funding-hero-main > svg { color: var(--red); }
+.funding-surplus .funding-hero-main > svg { color: var(--teal); }
+.funding-hero-main > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.funding-hero-main span { color: var(--muted); font-size: 11.5px; }
+.funding-hero-main strong { font-family: 'Manrope', sans-serif; font-size: 19px; line-height: 1.25; }
+.funding-hero-main p { color: var(--muted); font-size: 11.5px; }
+.funding-hero-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-content: start; }
+.funding-hero-stats > div { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: rgba(0,0,0,0.14); }
+.funding-hero-stats span { color: var(--muted); font-size: 10.5px; }
+.funding-hero-stats b { font-family: 'DM Sans', sans-serif; font-size: 13px; }
+.funding-buckets { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.funding-bucket { display: flex; flex-direction: column; gap: 4px; padding: 11px 12px; border: 1px solid var(--border-soft); border-radius: 10px; }
+.funding-bucket > span { color: var(--muted); font-size: 11px; }
+.funding-bucket strong { font-family: 'DM Sans', sans-serif; font-size: 15px; }
+.funding-bucket small { color: var(--muted); font-size: 10.5px; }
+.funding-table { display: flex; flex-direction: column; }
+.funding-table-head, .funding-table-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) repeat(3, minmax(110px, 0.8fr));
+  gap: 10px;
+  align-items: center;
+  padding: 9px 6px;
+  font-size: 12px;
+}
+.funding-table-head { color: var(--muted); font-weight: 700; font-size: 10.5px; letter-spacing: 0.03em; text-transform: uppercase; }
+.funding-table-row { border-top: 1px solid var(--border-soft); }
+.funding-table-row > span:not(.funding-month), .funding-table-row strong { text-align: right; font-family: 'DM Sans', sans-serif; }
+.funding-month { font-weight: 600; }
+.funding-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 13px 6px 2px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.funding-footer > div { display: flex; align-items: baseline; gap: 8px; }
+.funding-footer svg { color: var(--teal); align-self: center; }
+.funding-footer strong { font-family: 'DM Sans', sans-serif; font-size: 14px; }
+.funding-footer small { color: var(--muted); font-size: 10.5px; }
+.funding-footer .link-button { margin-left: auto; }
+
 /* ------------------------------ Budgets, goals, actuals ------------------------------ */
 
 .btn-danger { background: rgba(255, 107, 107, 0.14); color: #ff9b9b; border: 1px solid rgba(255, 107, 107, 0.3); }
@@ -909,6 +969,10 @@ p { margin: 0; }
   .budget-months { padding-left: 4px; }
   .budget-expense-row { grid-template-columns: minmax(0, 1fr) auto; }
   .budget-expense-tag { display: none; }
+  .funding-hero { grid-template-columns: 1fr; }
+  .funding-hero-stats { grid-template-columns: 1fr; }
+  .funding-table-head, .funding-table-row { grid-template-columns: minmax(90px, 1fr) repeat(3, minmax(80px, 0.8fr)); gap: 6px; font-size: 11px; }
+  .funding-footer .link-button { margin-left: 0; }
   .calendar-weekdays span { padding: 7px 3px; font-size: 9px; text-align: center; }
   .calendar-day { min-height: 80px; padding: 5px; gap: 3px; }
   .calendar-chip { grid-template-columns: minmax(0, 1fr); padding: 3px 4px; }

@@ -105,11 +105,11 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
     if (!modal || busy) return
     const period: BudgetPeriod = form.period ?? 'monthly'
     if (!form.category.trim() || form.monthly_limit <= 0) {
-      onNotify('Enter a category and an allocation above zero.')
+      onNotify('Enter a category and an amount above zero.')
       return
     }
     if (period !== 'monthly' && !form.start_date) {
-      onNotify('Choose a start date for this allocation.')
+      onNotify('Choose a date for this plan.')
       return
     }
     try {
@@ -120,22 +120,22 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
       } else {
         await actions.upsertBudget(payload)
       }
-      onNotify('Budget saved.')
+      onNotify('Plan saved.')
       setModal(null)
     } catch (caught) {
-      onNotify(caught instanceof Error ? caught.message : 'Could not save this budget.')
+      onNotify(caught instanceof Error ? caught.message : 'Could not save this plan.')
     } finally {
       setBusy(false)
     }
   }
 
   async function remove(budget: Budget) {
-    if (!window.confirm(`Remove the ${budgetTitle(budget)} allocation?`)) return
+    if (!window.confirm(`Remove the ${budgetTitle(budget)} plan?`)) return
     try {
       await actions.deleteBudget(budget.id)
-      onNotify('Budget removed.')
+      onNotify('Plan removed.')
     } catch (caught) {
-      onNotify(caught instanceof Error ? caught.message : 'Could not remove this budget.')
+      onNotify(caught instanceof Error ? caught.message : 'Could not remove this plan.')
     }
   }
 
@@ -146,35 +146,35 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
       <header className="page-header">
         <div>
           <span className="eyebrow">Plan</span>
-          <h1>Budgets & allocations</h1>
-          <p>Set a monthly limit, a yearly total, or a one-time allocation. Record the real spending later as an actual.</p>
+          <h1>Planned spends</h1>
+          <p>Plan monthly bills, yearly costs and one-off spends. Record the real amount when it happens.</p>
         </div>
         <div className="header-actions">
-          <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Add budget</button>
+          <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Add planned spend</button>
         </div>
       </header>
 
       <div className="stat-strip">
-        <div><span>Allocations</span><strong>{statuses.length}</strong></div>
-        <div><span>Total allocated</span><strong>{formatMoney(totalLimit, currency)}</strong></div>
-        <div><span>Spent in current period</span><strong>{formatMoney(currentSpent, currency)}</strong></div>
-        <div><span>Remaining</span><strong className={currentRemaining < 0 ? 'negative' : 'positive'}>{formatSigned(currentRemaining, currency)}</strong></div>
+        <div><span>Plans</span><strong>{statuses.length}</strong></div>
+        <div><span>Total planned</span><strong>{formatMoney(totalLimit, currency)}</strong></div>
+        <div><span>Recorded in current period</span><strong>{formatMoney(currentSpent, currency)}</strong></div>
+        <div><span>Still available</span><strong className={currentRemaining < 0 ? 'negative' : 'positive'}>{formatSigned(currentRemaining, currency)}</strong></div>
       </div>
 
       {overCount > 0 && (
         <div className="alert-strip alert-warn">
-          {overCount} {overCount === 1 ? 'allocation is' : 'allocations are'} over their limit in the current period.
+          {overCount} {overCount === 1 ? 'plan is' : 'plans are'} over their amount in the current period.
         </div>
       )}
 
       <section className="card">
         <div className="card-head">
           <div>
-            <h2>Budget overview</h2>
-            <p>Monthly limits use planned amounts until an actual exists. Dated allocations count only recorded actuals, so a future plan is never shown as spent.</p>
+            <h2>Planned spends</h2>
+            <p>Monthly plans use the planned amount until a real spend is recorded. Yearly and one-off plans count only recorded spends, so a future plan is never shown as spent.</p>
           </div>
           <span className={`status-pill ${overCount > 0 ? 'pill-red' : 'pill-teal'}`}>
-            {overCount > 0 ? `${overCount} over limit` : 'On track'}
+            {overCount > 0 ? `${overCount} over plan` : 'On track'}
           </span>
         </div>
 
@@ -215,7 +215,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                       <div className="progress-track">
                         <div className={`progress-fill ${status.currentRemaining < 0 ? 'progress-over' : ''}`} style={{ width: `${pct}%` }} />
                       </div>
-                      <span>{formatMoney(displaySpent, currency)} spent · {formatMoney(first?.available ?? status.budget.monthly_limit, currency)} available</span>
+                      <span>{formatMoney(displaySpent, currency)} recorded · {formatMoney(first?.available ?? status.budget.monthly_limit, currency)} available</span>
                     </div>
                     <strong className={status.currentRemaining < 0 ? 'negative' : 'positive'}>
                       {formatSigned(status.currentRemaining, currency)}
@@ -260,9 +260,9 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
         ) : (
           <div className="empty-state">
             <Wallet size={30} />
-            <strong>No budgets yet</strong>
-            <span>Add a monthly, yearly or one-time allocation to compare your plan against what you actually spend.</span>
-            <button className="btn btn-primary btn-small" onClick={openAdd}>Add budget</button>
+            <strong>No planned spends yet</strong>
+            <span>Add a monthly, yearly or one-off plan to compare what you planned with what you actually spent.</span>
+            <button className="btn btn-primary btn-small" onClick={openAdd}>Add planned spend</button>
           </div>
         )}
       </section>
@@ -270,8 +270,8 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
       <section className="card">
         <div className="card-head">
           <div>
-            <h2>Future expense plans</h2>
-            <p>Every expense cash-flow entry dated after today appears here as an allocation. Add the actual amount from Actual vs plan when it happens.</p>
+            <h2>One-off plans ahead</h2>
+            <p>Every expense dated after today appears here. Record the real amount from Recorded spends when it happens.</p>
           </div>
           <span className="status-pill">{futurePlans.length} planned · {formatMoney(futureTotal, currency)}</span>
         </div>
@@ -287,7 +287,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                 <span className={event.actualAmount !== undefined && event.actualAmount !== null ? 'positive' : ''}>
                   {event.actualAmount !== undefined && event.actualAmount !== null
                     ? `Recorded ${formatMoney(event.actualAmount, currency)}`
-                    : 'Awaiting actual'}
+                    : 'Not recorded yet'}
                 </span>
               </div>
             ))}
@@ -295,19 +295,19 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
         ) : (
           <div className="empty-state">
             <Wallet size={26} />
-            <strong>No future-dated expenses</strong>
-            <span>Add a one-time expense in Cash flow for a future date and it will show up here.</span>
+            <strong>No one-off plans yet</strong>
+            <span>Add a one-off expense in Cash flow for a future date and it will show up here.</span>
           </div>
         )}
         {futurePlans.length > 0 && (
-          <p className="preview-empty">Recorded so far against these plans: {formatMoney(futureRecorded, currency)}.</p>
+          <p className="preview-empty">Recorded so far: {formatMoney(futureRecorded, currency)}.</p>
         )}
       </section>
 
       {modal && (
         <Modal
-          title={modal.mode === 'edit' ? 'Edit allocation' : 'Add allocation'}
-          subtitle="Monthly limits repeat every month. Yearly totals and one-time amounts use their start date."
+          title={modal.mode === 'edit' ? 'Edit planned spend' : 'Add planned spend'}
+          subtitle="Choose how often it happens. When it really happens, record the actual amount against it."
           onClose={() => setModal(null)}
         >
           <div className="form-grid">
@@ -322,7 +322,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
               <input value={form.name ?? ''} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="e.g. Farm house build" />
             </label>
             <label className="field">
-              <span>Allocation amount ({currency})</span>
+              <span>Amount ({currency})</span>
               <input
                 type="number"
                 min="1"
@@ -332,16 +332,16 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
               />
             </label>
             <label className="field">
-              <span>Allocation type</span>
+              <span>Repeats</span>
               <select value={activePeriod} onChange={(event) => setForm({ ...form, period: event.target.value as BudgetPeriod })}>
-                <option value="monthly">Monthly limit</option>
-                <option value="yearly">Yearly total</option>
-                <option value="one_time">One-time allocation</option>
+                <option value="monthly">Every month</option>
+                <option value="yearly">Every year</option>
+                <option value="one_time">Once on a date</option>
               </select>
             </label>
             {activePeriod !== 'monthly' && (
               <label className="field">
-                <span>{activePeriod === 'yearly' ? 'Year starts' : 'Allocation date'}</span>
+                <span>{activePeriod === 'yearly' ? 'Month it falls in' : 'Date'}</span>
                 <input
                   type="date"
                   value={form.start_date ?? ''}
@@ -357,12 +357,12 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                 checked={form.rollover}
                 onChange={(event) => setForm({ ...form, rollover: event.target.checked })}
               />
-              <span><Repeat size={14} /> Carry unused budget (and overspend) into the next month</span>
+              <span><Repeat size={14} /> Carry unused amount (and overspend) into the next month</span>
             </label>
           )}
           <div className="dialog-actions">
             <button className="btn btn-outline btn-small" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void save()}>Save budget</button>
+            <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void save()}>Save plan</button>
           </div>
         </Modal>
       )}
