@@ -13,6 +13,7 @@ import BalancePlan from './pages/BalancePlan'
 import Budgets from './pages/Budgets'
 import CalendarPage from './pages/CalendarPage'
 import CashFlows from './pages/CashFlows'
+import Categories from './pages/Categories'
 import Dashboard from './pages/Dashboard'
 import Goals from './pages/Goals'
 import Ledger from './pages/Ledger'
@@ -105,6 +106,9 @@ export default function App() {
     }
     return {
       saveProfile: (patch) => run(() => api.saveProfile(user!, patch), 'Settings saved.'),
+      addCategory: (input) => run(() => api.addCategory(user!, input).then(() => undefined), 'Category added.'),
+      renameCategory: (id, name) => run(() => api.renameCategory(user!, id, name), 'Category renamed.'),
+      deleteCategory: (id) => run(() => api.deleteCategory(user!, id), 'Category removed.'),
       addAccount: (input) => run(() => api.addAccount(user!, input).then(() => undefined), 'Account added.'),
       updateAccount: (id, patch) => run(() => api.updateAccount(user!, id, patch), 'Account updated.'),
       deleteAccount: (id) => run(() => api.deleteAccount(user!, id), 'Account removed.'),
@@ -190,6 +194,7 @@ export default function App() {
           />
         )}
         {tab === 'cashflows' && <CashFlows data={data} actions={actions} onNotify={notify} />}
+        {tab === 'categories' && <Categories data={data} actions={actions} onNotify={notify} />}
         {tab === 'budgets' && <Budgets data={data} actions={actions} simulation={baseSimulation} currency={data.profile.currency || 'INR'} onNotify={notify} />}
         {tab === 'goals' && <Goals data={data} actions={actions} simulation={baseSimulation} currency={data.profile.currency || 'INR'} onNotify={notify} />}
         {tab === 'actuals' && <Actuals data={data} actions={actions} simulation={baseSimulation} currency={data.profile.currency || 'INR'} onNotify={notify} />}
@@ -239,6 +244,7 @@ export default function App() {
           <CashFlowForm
             defaultKind={quickAdd}
             accounts={data.accounts}
+            categories={data.categories}
             currency={data.profile.currency}
             onCancel={() => setQuickAdd(null)}
             onSave={handleQuickAdd}

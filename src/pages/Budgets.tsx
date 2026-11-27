@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Pencil, Plus, Repeat, Trash2, Wallet } from 'lucide-react'
 import Modal from '../components/Modal'
 import { buildBudgetStatuses } from '../lib/budgets'
-import { EXPENSE_CATEGORIES } from '../lib/categories'
+import { categoriesOfKind } from '../lib/categories'
 import { formatMoney, formatSigned } from '../lib/format'
 import type { AppActions, AppData, Budget, NewBudget, Simulation } from '../lib/types'
 
@@ -16,8 +16,8 @@ interface Props {
 
 type ModalState = { mode: 'add' } | { mode: 'edit'; budget: Budget }
 
-function blankBudget(): NewBudget {
-  return { category: EXPENSE_CATEGORIES[0], monthly_limit: 0, rollover: false }
+function blankBudget(categories: string[] = ['Other']): NewBudget {
+  return { category: categories[0] ?? 'Other', monthly_limit: 0, rollover: false }
 }
 
 export default function Budgets({ data, actions, simulation, currency, onNotify }: Props) {
@@ -26,6 +26,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
   const [expanded, setExpanded] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const categories = categoriesOfKind(data.categories, 'expense')
   const statuses = useMemo(() => buildBudgetStatuses(data, simulation.months), [data, simulation.months])
   const totalLimit = statuses.reduce((sum, status) => sum + status.budget.monthly_limit, 0)
   const currentSpent = statuses.reduce((sum, status) => sum + (status.months[0]?.spent ?? 0), 0)
@@ -34,8 +35,8 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
 
   function openAdd() {
     const used = new Set(data.budgets.map((budget) => budget.category))
-    const category = EXPENSE_CATEGORIES.find((item) => !used.has(item)) ?? EXPENSE_CATEGORIES[0]
-    setForm({ ...blankBudget(), category })
+    const category = categories.find((item) => !used.has(item)) ?? categories[0] ?? 'Other'
+    setForm({ ...blankBudget(categories), category })
     setModal({ mode: 'add' })
   }
 
@@ -192,7 +193,7 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
             <label className="field">
               <span>Category</span>
               <select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>
-                {EXPENSE_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+                {categories.map((category) => <option key={category} value={category}>{category}</option>)}
               </select>
             </label>
             <label className="field">

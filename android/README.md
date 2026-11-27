@@ -20,9 +20,9 @@ transactions into the same Supabase account.
   `Rs`, `Rs.`, `INR` or `INR.` take priority; if a message also contains a balance, the
   currency amount nearest a debit/credit word wins. No SMS text is sent to an AI service
   or third party.
-- **Editable review.** Candidates appear with editable amount, name and category, an account
-  spinner listing every account in your web plan (including custom funds), and **Expense / Income /
-  Ignore** buttons. A choice removes the card from the
+- **Editable review.** Candidates appear with an editable amount and name, plus category and
+  account spinners listing the reusable categories and money accounts from your web plan
+  (including custom funds), and **Expense / Income / Ignore** buttons. A choice removes the card from the
   review queue and moves it to **Ready to save**; nothing is uploaded until you tap
   **Save selected**.
 - **Existing tables.** Confirmed rows go to `cash_flows` (as `one_time`) and `actuals`

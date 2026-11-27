@@ -50,6 +50,13 @@ public final class MainActivity extends Activity {
     private static final int CSV_BATCH_LIMIT = 100;
     private static final int VISIBLE_CANDIDATE_LIMIT = 20;
 
+    private static final String[] DEFAULT_CATEGORIES = {
+            "Housing", "Utilities", "Groceries", "Transport", "Insurance", "Health", "Education",
+            "Shopping", "Dining", "Entertainment", "Subscriptions", "Travel", "Lifestyle",
+            "Hobbies", "Investments", "Other", "Salary", "Business", "Freelance",
+            "Rent Received", "Interest", "Dividends", "Gifts"
+    };
+
     private static final class AccountOption {
         final String id;
         final String name;
@@ -67,6 +74,7 @@ public final class MainActivity extends Activity {
     private TextView statusView;
     private TextView summaryView;
     private final List<AccountOption> accountOptions = new ArrayList<>();
+    private final List<String> categoryOptions = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,6 +84,9 @@ public final class MainActivity extends Activity {
         executor = Executors.newSingleThreadExecutor();
         accountOptions.add(new AccountOption("cash", "Cash in hand"));
         accountOptions.add(new AccountOption("bank", "Bank balance"));
+        for (String category : DEFAULT_CATEGORIES) {
+            if (!categoryOptions.contains(category)) categoryOptions.add(category);
+        }
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -89,6 +100,7 @@ public final class MainActivity extends Activity {
 
         renderScreen();
         loadAccounts();
+        loadCategories();
     }
 
     @Override
@@ -148,6 +160,7 @@ public final class MainActivity extends Activity {
                                 public void run() {
                                     renderScreen();
                                     loadAccounts();
+                                    loadCategories();
                                 }
                             });
                         } catch (final Exception error) {
@@ -276,7 +289,7 @@ public final class MainActivity extends Activity {
 
         final EditText name = textField("Name", candidate.name);
         card.addView(name);
-        final EditText category = textField("Category", candidate.category);
+        final Spinner category = categorySpinner(candidate.category);
         card.addView(category);
 
         final Spinner account = accountSpinner(candidate.account);
@@ -310,15 +323,16 @@ public final class MainActivity extends Activity {
     }
 
     private void applyChoice(Candidate candidate, EditText amount, EditText name,
-                             EditText category, Spinner account, String kind, boolean ignored) {
+                             Spinner category, Spinner account, String kind, boolean ignored) {
         String accountValue = String.valueOf(account.getSelectedItem());
+        String categoryValue = String.valueOf(category.getSelectedItem());
         double amountValue = parseAmount(amount.getText().toString());
         if (!ignored && amountValue <= 0) {
             toast("Enter a valid amount before choosing Expense or Income");
             return;
         }
         db.updateCandidateChoice(candidate.fingerprint, amountValue,
-                name.getText().toString(), category.getText().toString(),
+                name.getText().toString(), categoryValue,
                 accountValue, kind);
         if (ignored) {
             db.markIgnored(candidate.fingerprint);
@@ -740,6 +754,53 @@ public final class MainActivity extends Activity {
                 }
             }
         });
+    }
+
+    /** Pull the user's reusable category list from Supabase so review cards match the web app. */
+    private void loadCategories() {
+        if (!api.isSignedIn()) return;
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    JSONArray rows = api.fetchCategories(api.getUserId());
+                    final List<String> loaded = new ArrayList<String>();
+                    for (int index = 0; index < rows.length(); index += 1) {
+                        String name = rows.getJSONObject(index).optString("name", "").trim();
+                        if (!name.isEmpty() && !loaded.contains(name)) loaded.add(name);
+                    }
+                    if (loaded.isEmpty()) return;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            categoryOptions.clear();
+                            categoryOptions.addAll(loaded);
+                            renderScreen();
+                        }
+                    });
+                } catch (Exception error) {
+                    // Offline or no categories table yet: keep the built-in defaults.
+                }
+            }
+        });
+    }
+
+    private void ensureCategoryOption(String value) {
+        if (value == null || value.trim().isEmpty()) return;
+        String name = value.trim();
+        if (!categoryOptions.contains(name)) categoryOptions.add(name);
+    }
+
+    private Spinner categorySpinner(String selected) {
+        ensureCategoryOption(selected);
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
+                android.R.layout.simple_list_item_1, categoryOptions);
+        Spinner view = new Spinner(this);
+        view.setAdapter(adapter);
+        String value = selected == null ? "" : selected.trim();
+        int position = categoryOptions.indexOf(value);
+        view.setSelection(position >= 0 ? position : 0);
+        return withTopMargin(view, dp(8));
     }
 
     private String accountLabel(String id) {

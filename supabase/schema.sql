@@ -438,9 +438,35 @@ create table if not exists public.transfers (
 -- Recorded amounts remember which account actually paid/received them.
 alter table public.actuals add column if not exists account text not null default 'bank';
 
+-- Reusable category names, editable from the Categories page.
+create table if not exists public.categories (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  id text not null,
+  name text not null,
+  kind text not null default 'expense' check (kind in ('income', 'expense')),
+  created_at timestamptz not null default now(),
+  primary key (user_id, id),
+  unique (user_id, kind, name)
+);
+
+create index if not exists categories_user_idx on public.categories(user_id);
 create index if not exists accounts_user_idx on public.accounts(user_id);
 create index if not exists transfers_user_idx on public.transfers(user_id);
 create index if not exists transfers_date_idx on public.transfers(date);
+
+alter table public.categories enable row level security;
+drop policy if exists "categories_select_own" on public.categories;
+drop policy if exists "categories_insert_own" on public.categories;
+drop policy if exists "categories_update_own" on public.categories;
+drop policy if exists "categories_delete_own" on public.categories;
+create policy "categories_select_own" on public.categories
+  for select to authenticated using (auth.uid() = user_id);
+create policy "categories_insert_own" on public.categories
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy "categories_update_own" on public.categories
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "categories_delete_own" on public.categories
+  for delete to authenticated using (auth.uid() = user_id);
 
 alter table public.accounts enable row level security;
 drop policy if exists "accounts_select_own" on public.accounts;
@@ -542,7 +568,51 @@ create policy "loan_payments_update_own" on public.loan_payments
 create policy "loan_payments_delete_own" on public.loan_payments
   for delete to authenticated using (auth.uid() = user_id);
 
-grant select, insert, update, delete on public.profiles, public.monthly_incomes, public.cash_flows, public.cash_flow_overrides, public.cash_flow_moves, public.cash_flow_skips, public.budgets, public.goals, public.vendor_rules, public.actuals, public.loans, public.loan_payments, public.accounts, public.transfers to authenticated;
+grant select, insert, update, delete on public.profiles, public.monthly_incomes, public.cash_flows, public.cash_flow_overrides, public.cash_flow_moves, public.cash_flow_skips, public.budgets, public.goals, public.vendor_rules, public.actuals, public.loans, public.loan_payments, public.categories, public.accounts, public.transfers to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Editable default category lists
+-- ---------------------------------------------------------------------------
+
+create or replace function public.seed_default_categories(target_user uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.categories (user_id, id, name, kind)
+  select target_user,
+         'default-expense-' || trim(both '-' from regexp_replace(lower(d.name), '[^a-z0-9]+', '-', 'g')),
+         d.name,
+         'expense'
+  from unnest(array[
+    'Housing', 'Utilities', 'Groceries', 'Transport', 'Insurance', 'Health', 'Education',
+    'Shopping', 'Dining', 'Entertainment', 'Subscriptions', 'Travel', 'Lifestyle',
+    'Hobbies', 'Investments', 'Other'
+  ]) as d(name)
+  on conflict (user_id, kind, name) do nothing;
+  insert into public.categories (user_id, id, name, kind)
+  select target_user,
+         'default-income-' || trim(both '-' from regexp_replace(lower(d.name), '[^a-z0-9]+', '-', 'g')),
+         d.name,
+         'income'
+  from unnest(array[
+    'Salary', 'Business', 'Freelance', 'Rent Received', 'Interest', 'Dividends', 'Gifts', 'Other'
+  ]) as d(name)
+  on conflict (user_id, kind, name) do nothing;
+end;
+$$;
+
+do $$
+declare
+  profile_row record;
+begin
+  for profile_row in select user_id from public.profiles loop
+    perform public.seed_default_categories(profile_row.user_id);
+  end loop;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Create a profile automatically when a new user signs up
@@ -566,6 +636,7 @@ begin
     (new.id, 'cash', 'Cash in hand', 'cash', 0),
     (new.id, 'bank', 'Bank balance', 'bank', 0)
   on conflict (user_id, id) do nothing;
+  perform public.seed_default_categories(new.id);
   return new;
 end;
 $$;

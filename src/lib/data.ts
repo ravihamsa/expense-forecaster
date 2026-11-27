@@ -1,8 +1,10 @@
+import { defaultCategories, defaultCategoryId } from './categories'
 import { toDateInputValue } from './schedule'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
 import type {
   Account,
   Actual,
+  AppCategory,
   AppData,
   Budget,
   CashFlow,
@@ -21,6 +23,7 @@ import type {
 
 export type AccountInput = Omit<Account, 'id' | 'user_id' | 'created_at'>
 export type TransferInput = Omit<Transfer, 'id' | 'user_id' | 'created_at'>
+export type CategoryInput = Omit<AppCategory, 'id' | 'user_id' | 'created_at'>
 export type CashFlowInput = Omit<CashFlow, 'id' | 'user_id' | 'created_at'>
 export type CashFlowOverrideInput = Omit<CashFlowOverride, 'id' | 'user_id' | 'created_at'>
 export type CashFlowMoveInput = Omit<CashFlowMove, 'id' | 'user_id' | 'created_at'>
@@ -124,6 +127,7 @@ function defaultData(userId: string, displayName: string): AppData {
   const profile = defaultProfile(userId, displayName)
   return {
     profile,
+    categories: defaultCategories(userId),
     accounts: defaultAccounts(userId, profile),
     transfers: [],
     monthlyIncomes: [],
@@ -302,6 +306,36 @@ function normalizeData(data: AppData): AppData {
   const legacyProfile = normalizeProfile(raw.profile ?? defaultProfile('', ''))
   const userId = legacyProfile.user_id
 
+  // Categories are a reusable list. Old data has no list yet, so it gets the
+  // built-ins plus any category already used by a row (including SMS imports).
+  const categories: AppCategory[] = []
+  const categoryKeys = new Set<string>()
+  const addCategory = (row: { id?: string; user_id?: string; name?: string; kind?: string }) => {
+    const name = (row.name ?? '').trim()
+    const kind = row.kind === 'income' ? 'income' : 'expense'
+    if (!name) return
+    const key = `${kind}:${name.toLowerCase()}`
+    if (categoryKeys.has(key)) return
+    categoryKeys.add(key)
+    categories.push({
+      id: row.id || defaultCategoryId(kind, name),
+      user_id: row.user_id || userId,
+      name,
+      kind,
+    })
+  }
+  ;(raw.categories?.length ? raw.categories : defaultCategories(userId)).forEach(addCategory)
+  const categoryRefs: { name: string; kind: AppCategory['kind'] }[] = [
+    ...(raw.cashFlows ?? []).map((row) => ({ name: row.category ?? '', kind: row.kind })),
+    ...(raw.budgets ?? []).map((row) => ({ name: row.category ?? '', kind: 'expense' as const })),
+    ...(raw.vendorRules ?? []).map((row) => ({ name: row.category ?? '', kind: row.kind })),
+    ...(raw.actuals ?? []).map((row) => ({ name: row.category ?? '', kind: row.kind })),
+  ]
+  categoryRefs.forEach(addCategory)
+  for (const kind of ['expense', 'income'] as const) {
+    addCategory({ id: defaultCategoryId(kind, 'Other'), name: 'Other', kind })
+  }
+
   const accounts: Account[] = (raw.accounts ?? []).map((account) => ({
     ...account,
     user_id: account.user_id || userId,
@@ -342,6 +376,7 @@ function normalizeData(data: AppData): AppData {
       bank_balance: bank,
       opening_balance: accounts.reduce((sum, account) => sum + account.opening_balance, 0),
     },
+    categories,
     accounts,
     transfers: (raw.transfers ?? []).map((transfer) => ({
       ...transfer,
@@ -414,6 +449,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
   if (usingSupabase && supabase) {
     const [
       profileResult,
+      categoriesResult,
       accountsResult,
       transfersResult,
       incomesResult,
@@ -429,6 +465,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       paymentsResult,
     ] = await Promise.all([
       supabase.from('profiles').select('*').eq('user_id', user.id).maybeSingle(),
+      supabase.from('categories').select('*').eq('user_id', user.id).order('name', { ascending: true }),
       supabase.from('accounts').select('*').eq('user_id', user.id).order('created_at', { ascending: true }),
       supabase.from('transfers').select('*').eq('user_id', user.id).order('date', { ascending: false }),
       supabase.from('monthly_incomes').select('*').eq('user_id', user.id).order('month', { ascending: true }),
@@ -444,6 +481,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
       supabase.from('loan_payments').select('*').eq('user_id', user.id).order('payment_date', { ascending: false }),
     ])
     if (profileResult.error) throw profileResult.error
+    if (categoriesResult.error && !isMissingTable(categoriesResult.error.code)) throw categoriesResult.error
     if (accountsResult.error && !isMissingTable(accountsResult.error.code)) throw accountsResult.error
     if (transfersResult.error && !isMissingTable(transfersResult.error.code)) throw transfersResult.error
     if (incomesResult.error) throw incomesResult.error
@@ -470,6 +508,7 @@ export async function loadData(user: AuthUser): Promise<AppData> {
     }
     return normalizeData({
       profile,
+      categories: (categoriesResult.error ? undefined : categoriesResult.data) as unknown as AppCategory[],
       accounts: accountsResult.error ? [] : (accountsResult.data ?? []) as unknown as Account[],
       transfers: transfersResult.error ? [] : (transfersResult.data ?? []).map(
         (row) => ensureNumbers(row as unknown as Record<string, unknown>) as unknown as Transfer,
@@ -570,6 +609,143 @@ async function syncProfileFromAccounts(user: AuthUser, accounts: Account[]): Pro
   const bank = accounts.find((account) => account.id === 'bank')?.opening_balance ?? 0
   const opening_balance = accounts.reduce((sum, account) => sum + account.opening_balance, 0)
   await saveProfile(user, { cash_in_hand: cash, bank_balance: bank, opening_balance }, false)
+}
+
+async function persistCategories(user: AuthUser, updater: (data: AppData) => AppData): Promise<void> {
+  const stored = await loadData(user)
+  writeJSON(KEYS.data(user.id), normalizeData(updater(stored)))
+}
+
+function remapCategoryReferencesLocally(
+  data: AppData,
+  kind: AppCategory['kind'],
+  from: string,
+  to: string,
+  dropBudget: boolean,
+): AppData {
+  const budgets = data.budgets
+    .filter((budget) => !(dropBudget && budget.category === from))
+    .map((budget) => (kind === 'expense' && budget.category === from ? { ...budget, category: to } : budget))
+  return {
+    ...data,
+    cashFlows: data.cashFlows.map((row) => (
+      row.kind === kind && row.category === from ? { ...row, category: to } : row
+    )),
+    vendorRules: data.vendorRules.map((row) => (
+      row.kind === kind && row.category === from ? { ...row, category: to } : row
+    )),
+    actuals: data.actuals.map((row) => (
+      row.kind === kind && row.category === from ? { ...row, category: to } : row
+    )),
+    budgets,
+  }
+}
+
+async function remapCategoryRowsRemotely(
+  user: AuthUser,
+  kind: AppCategory['kind'],
+  from: string,
+  to: string,
+  dropBudget: boolean,
+): Promise<void> {
+  if (!supabase) return
+  for (const table of ['cash_flows', 'vendor_rules', 'actuals'] as const) {
+    const { error } = await supabase.from(table).update({ category: to })
+      .eq('user_id', user.id).eq('kind', kind).eq('category', from)
+    if (error) throw error
+  }
+  if (kind !== 'expense') return
+  if (dropBudget) {
+    const { error } = await supabase.from('budgets').delete()
+      .eq('user_id', user.id).eq('category', from)
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from('budgets').update({ category: to })
+      .eq('user_id', user.id).eq('category', from)
+    if (error) throw error
+  }
+}
+
+export async function addCategory(user: AuthUser, input: CategoryInput): Promise<AppCategory> {
+  const name = input.name.trim()
+  const kind = input.kind === 'income' ? 'income' : 'expense'
+  if (!name) throw new Error('Please enter a category name.')
+  const current = await loadData(user)
+  if (current.categories.some((row) => row.kind === kind && row.name.toLowerCase() === name.toLowerCase())) {
+    throw new Error('That category already exists.')
+  }
+  const row: AppCategory = { ...input, id: makeId(), user_id: user.id, name, kind }
+  if (usingSupabase && supabase) {
+    const { id: _id, created_at: _created, ...insertRow } = row
+    void _id
+    void _created
+    const { error } = await supabase.from('categories').insert(insertRow)
+    if (error && !isMissingTable(error.code)) throw error
+    if (error) {
+      await persistCategories(user, (data) => ({ ...data, categories: [...data.categories, row] }))
+    }
+  } else {
+    await persistCategories(user, (data) => ({ ...data, categories: [...data.categories, row] }))
+  }
+  return row
+}
+
+export async function renameCategory(user: AuthUser, id: string, name: string): Promise<void> {
+  const clean = name.trim()
+  if (!clean) throw new Error('Please enter a category name.')
+  const current = await loadData(user)
+  const category = current.categories.find((row) => row.id === id)
+  if (!category) throw new Error('That category no longer exists.')
+  if (category.name.toLowerCase() === 'other') throw new Error('Other is the fallback category and cannot be renamed.')
+  if (current.categories.some((row) => row.id !== id && row.kind === category.kind
+    && row.name.toLowerCase() === clean.toLowerCase())) {
+    throw new Error('That category already exists.')
+  }
+  const from = category.name
+  if (usingSupabase && supabase) {
+    const { error } = await supabase.from('categories').update({ name: clean })
+      .eq('user_id', user.id).eq('id', id)
+    if (error && !isMissingTable(error.code)) throw error
+    if (error) {
+      await persistCategories(user, (data) => ({
+        ...remapCategoryReferencesLocally(data, category.kind, from, clean, false),
+        categories: data.categories.map((row) => (row.id === id ? { ...row, name: clean } : row)),
+      }))
+      return
+    }
+    if (from !== clean) await remapCategoryRowsRemotely(user, category.kind, from, clean, false)
+    return
+  }
+  await persistCategories(user, (data) => ({
+    ...remapCategoryReferencesLocally(data, category.kind, from, clean, false),
+    categories: data.categories.map((row) => (row.id === id ? { ...row, name: clean } : row)),
+  }))
+}
+
+export async function deleteCategory(user: AuthUser, id: string): Promise<void> {
+  const current = await loadData(user)
+  const category = current.categories.find((row) => row.id === id)
+  if (!category) return
+  if (category.name.toLowerCase() === 'other') throw new Error('Other is the fallback category and cannot be removed.')
+  const fallback = current.categories.find((row) => row.kind === category.kind && row.name.toLowerCase() === 'other')?.name ?? 'Other'
+  const dropBudget = current.budgets.some((budget) => budget.category === fallback)
+  if (usingSupabase && supabase) {
+    const { error } = await supabase.from('categories').delete().eq('user_id', user.id).eq('id', id)
+    if (error && !isMissingTable(error.code)) throw error
+    if (error) {
+      await persistCategories(user, (data) => ({
+        ...remapCategoryReferencesLocally(data, category.kind, category.name, fallback, dropBudget),
+        categories: data.categories.filter((row) => row.id !== id),
+      }))
+      return
+    }
+    await remapCategoryRowsRemotely(user, category.kind, category.name, fallback, dropBudget)
+    return
+  }
+  await persistCategories(user, (data) => ({
+    ...remapCategoryReferencesLocally(data, category.kind, category.name, fallback, dropBudget),
+    categories: data.categories.filter((row) => row.id !== id),
+  }))
 }
 
 export async function addAccount(user: AuthUser, input: AccountInput): Promise<Account> {
@@ -1299,6 +1475,11 @@ function remapData(data: AppData, userId: string): AppData {
     return freshId(oldId)
   }
 
+  const categories = data.categories.map((row) => ({
+    ...row,
+    id: row.id.startsWith('default-') ? row.id : freshId(row.id),
+    user_id: userId,
+  }))
   const accounts = data.accounts.map((row) => ({
     ...row,
     id: row.id === 'cash' || row.id === 'bank' ? row.id : freshId(row.id),
@@ -1361,6 +1542,7 @@ function remapData(data: AppData, userId: string): AppData {
 
   return normalizeData({
     profile: { ...data.profile, user_id: userId },
+    categories,
     accounts,
     transfers,
     monthlyIncomes,
@@ -1386,6 +1568,7 @@ function mergeData(current: AppData, incoming: AppData): AppData {
   }
   return normalizeData({
     profile: incoming.profile,
+    categories: by([...current.categories, ...incoming.categories], (row) => `${row.kind}:${row.name.toLowerCase()}`),
     accounts: by([...current.accounts, ...incoming.accounts], (row) => row.id),
     transfers: by([...current.transfers, ...incoming.transfers], (row) => row.id),
     monthlyIncomes: by([...current.monthlyIncomes, ...incoming.monthlyIncomes], (row) => row.month),
@@ -1440,11 +1623,12 @@ export async function importDataExport(
       'vendor_rules',
       'monthly_incomes',
       'transfers',
+      'categories',
       'accounts',
     ]
     for (const table of children) {
       const { error } = await client.from(table).delete().eq('user_id', user.id)
-      if (error) throw error
+      if (error && !(table === 'categories' && isMissingTable(error.code))) throw error
     }
   }
 
@@ -1462,6 +1646,12 @@ export async function importDataExport(
   }
 
   await writeRows('profiles', [{ ...imported.profile, updated_at: new Date().toISOString() }], 'user_id')
+  try {
+    await writeRows('categories', imported.categories, 'user_id,id')
+  } catch (caught) {
+    const code = (caught as { code?: string }).code
+    if (!isMissingTable(code)) throw caught
+  }
   await writeRows('accounts', imported.accounts, 'user_id,id')
   await writeRows('transfers', imported.transfers, 'id')
   await writeRows('cash_flows', imported.cashFlows)

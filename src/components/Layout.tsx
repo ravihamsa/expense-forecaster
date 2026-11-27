@@ -8,6 +8,7 @@ import {
   HardDrive,
   Landmark,
   LayoutDashboard,
+  List,
   LogOut,
   Menu,
   Scale,
@@ -24,6 +25,7 @@ import type { Tab } from '../lib/types'
 const NAV: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'cashflows', label: 'Cash flow', icon: ArrowLeftRight },
+  { id: 'categories', label: 'Categories', icon: List },
   { id: 'budgets', label: 'Budgets', icon: Tags },
   { id: 'goals', label: 'Goals', icon: Target },
   { id: 'actuals', label: 'Actual vs plan', icon: CheckCircle2 },

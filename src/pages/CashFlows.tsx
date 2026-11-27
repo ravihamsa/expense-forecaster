@@ -170,6 +170,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
             initial={modal.flow}
             defaultKind={modal.kind}
             accounts={data.accounts}
+            categories={data.categories}
             currency={currency}
             onCancel={() => setModal(null)}
             onSave={handleSave}

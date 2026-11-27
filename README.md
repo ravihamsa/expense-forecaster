@@ -12,6 +12,7 @@ you can try everything immediately — data is stored in that browser only.
 - Email + password sign up / sign in (Supabase Auth), with per-user row-level security.
 - Multiple money accounts: `Cash in hand` and `Bank balance` are built in; create your own (e.g. a **farm-house build fund**) with its own opening balance. Every account is a separate balance bucket included in net worth and the forecast. Cash flows, loans, payments and SMS imports can all be assigned to any account.
 - Net-neutral transfers between accounts, with both legs recorded at the same amount so your total never changes.
+- Reusable expense/income categories managed on the **Categories** page. Add, rename or remove your own names once and pick them in cash flows, budgets and SMS imports; removed categories move existing entries to `Other`.
 - Expected income planned month by month directly in the dashboard's month preview (editable any time, carried forward when a month is skipped) with optional annual income growth, plus a starting balance that is the sum of every account's opening balance and optional expense inflation.
 - Cash flow entries with schedules:
   - monthly
@@ -63,11 +64,13 @@ Open http://localhost:5173. Without a `.env.local` file you will be in local dem
 2. Open **SQL Editor → New query**, paste the contents of [`supabase/schema.sql`](supabase/schema.sql),
    and run it. This creates `profiles`, `monthly_incomes`, `cash_flows`, `cash_flow_overrides`,
    `cash_flow_moves`, `cash_flow_skips`, `budgets`, `goals`, `actuals`, `loans`, `loan_payments`,
-   `accounts` and `transfers`, the `account` columns used by the money trail, the income `day`
-   used by the calendar, `vendor_rules` learned by the SMS companion, row-level security policies
-   and a trigger that creates a profile (with cash and bank accounts) for every new user. Existing
-   projects get their cash/bank balances backfilled as built-in accounts.
-   Re-run this file whenever you upgrade the app so new tables and policies are added.
+   `categories`, `accounts` and `transfers`, the `account` columns used by the money trail, the
+   income `day` used by the calendar, `vendor_rules` learned by the SMS companion, row-level
+   security policies and a trigger that creates a profile (with cash, bank and default categories)
+   for every new user. Existing projects get their cash/bank balances and default categories
+   backfilled. Re-run this file whenever you upgrade the app so new tables and policies are added;
+   [`supabase/migrations/002_multi_accounts.sql`](supabase/migrations/002_multi_accounts.sql)
+   contains just the newer accounts/transfers/categories changes if you want a shorter upgrade.
 3. Copy `.env.example` to `.env.local` and fill in your project URL and anon public key:
 
    ```bash
@@ -134,9 +137,10 @@ same planner. It is **manual and foreground-only**: nothing watches SMS in the b
 1. Tap **Scan SMS**. The app asks for `READ_SMS` permission only at that point.
 2. It reads received messages from the **current month only** (50 per tap), parses them on the
    device, and shows each as an editable suggestion.
-3. Mark each message **Expense**, **Income**, or **Ignore**. Vendor, category, and account are
-   pre-filled from learned rules and can be edited. The account picker lists every account in your
-   web plan (including custom funds), fetched from Supabase when the companion starts.
+3. Mark each message **Expense**, **Income**, or **Ignore**. Vendor is pre-filled from learned
+   rules; the category and account pickers list the same reusable categories and money accounts
+   you created in the web app (including custom funds), fetched from Supabase when the companion
+   starts.
 4. Tap **Save selected**. Confirmed messages become one-time cash flows plus matching actuals, so
    they appear in the web dashboard, Actual vs plan, and the money trail. The rows are tagged
    `source = sms`.
@@ -188,7 +192,7 @@ src/
     advice.ts             recommendations based on the current plan
     actuals.ts            actual creation and CSV import helpers
     budgets.ts            per-category budget and rollover calculations
-    categories.ts         shared income/expense category lists
+    categories.ts         default category seeds and reusable-list helpers
     data.ts               Supabase/local demo persistence, auth and JSON export/import
     format.ts             currency and date formatting
     goals.ts              goal funding and progress calculations

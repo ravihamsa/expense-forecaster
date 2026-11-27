@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import type { Account, CashFlow, FlowKind, MoneyAccount, NewCashFlow, Recurrence } from '../lib/types'
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../lib/categories'
+import type { Account, AppCategory, CashFlow, FlowKind, MoneyAccount, NewCashFlow, Recurrence } from '../lib/types'
+import { categoriesOfKind, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../lib/categories'
 import { currencySymbol } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
 
@@ -16,21 +16,28 @@ interface Props {
   initial?: CashFlow | null
   defaultKind?: FlowKind
   accounts?: Account[]
+  categories?: AppCategory[]
   currency?: string
   onSave: (input: NewCashFlow) => Promise<void>
   onCancel: () => void
 }
 
-export default function CashFlowForm({ initial, defaultKind = 'expense', accounts = [], currency = 'INR', onSave, onCancel }: Props) {
+export default function CashFlowForm({
+  initial,
+  defaultKind = 'expense',
+  accounts = [],
+  categories = [],
+  currency = 'INR',
+  onSave,
+  onCancel,
+}: Props) {
   const [kind, setKind] = useState<FlowKind>(initial?.kind ?? defaultKind)
   const [name, setName] = useState(initial?.name ?? '')
   const [amount, setAmount] = useState(String(initial?.amount ?? ''))
-  const [category, setCategory] = useState(initial?.category ?? (defaultKind === 'income' ? 'Salary' : 'Housing'))
-  const [customCategory, setCustomCategory] = useState(() => {
-    const initialCategory = initial?.category ?? ''
-    return initialCategory !== ''
-      && !(initial?.kind === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).includes(initialCategory)
-  })
+  const namesFor = (target: FlowKind): string[] => categories.length
+    ? categoriesOfKind(categories, target)
+    : target === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
+  const [category, setCategory] = useState(initial?.category ?? namesFor(defaultKind)[0] ?? 'Other')
   const [account, setAccount] = useState<MoneyAccount>(initial?.account ?? 'bank')
   const [recurrence, setRecurrence] = useState<Recurrence>(initial?.recurrence ?? 'monthly')
   const [intervalCount, setIntervalCount] = useState(String(initial?.interval_count ?? 3))
@@ -40,9 +47,11 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', account
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const categories = kind === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES
+  const categoryNames = namesFor(kind)
+  const categoryOptions = initial?.category && !categoryNames.includes(initial.category)
+    ? [initial.category, ...categoryNames]
+    : categoryNames
   const needsInterval = recurrence === 'every_n_months' || recurrence === 'every_n_years'
-  const categoryValue = customCategory ? '__custom__' : category
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -77,8 +86,8 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', account
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       <div className="segmented" role="group" aria-label="Type">
-        <button type="button" className={kind === 'expense' ? 'segment-active' : ''} onClick={() => { setKind('expense'); setCategory('Housing'); setCustomCategory(false) }}>Expense</button>
-        <button type="button" className={kind === 'income' ? 'segment-active' : ''} onClick={() => { setKind('income'); setCategory('Salary'); setCustomCategory(false) }}>Income</button>
+        <button type="button" className={kind === 'expense' ? 'segment-active' : ''} onClick={() => { setKind('expense'); setCategory(namesFor('expense')[0] ?? 'Other') }}>Expense</button>
+        <button type="button" className={kind === 'income' ? 'segment-active' : ''} onClick={() => { setKind('income'); setCategory(namesFor('income')[0] ?? 'Other') }}>Income</button>
       </div>
 
       <div className="form-grid">
@@ -92,28 +101,10 @@ export default function CashFlowForm({ initial, defaultKind = 'expense', account
         </label>
         <label className="field">
           <span>Category</span>
-          <select
-            value={categoryValue}
-            onChange={(e) => {
-              if (e.target.value === '__custom__') {
-                setCustomCategory(true)
-                setCategory(categories.includes(category) ? '' : category)
-              } else {
-                setCustomCategory(false)
-                setCategory(e.target.value)
-              }
-            }}
-          >
-            {categories.map((option) => <option key={option} value={option}>{option}</option>)}
-            <option value="__custom__">Custom category…</option>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            {categoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
         </label>
-        {customCategory && (
-          <label className="field field-span-2">
-            <span>Custom category name</span>
-            <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Pet care" required />
-          </label>
-        )}
         <label className="field">
           <span>Money account</span>
           <select value={account} onChange={(e) => setAccount(e.target.value as MoneyAccount)}>

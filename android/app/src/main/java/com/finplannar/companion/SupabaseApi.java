@@ -150,6 +150,15 @@ final class SupabaseApi {
         return new JSONArray(response);
     }
 
+    /** Reusable expense/income categories from the web app's Categories page. */
+    JSONArray fetchCategories(String userId) throws IOException, JSONException {
+        String path = "/rest/v1/categories?select=name,kind&user_id=eq."
+                + URLEncoder.encode(userId, "UTF-8")
+                + "&order=name.asc";
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
     // --------------------------------------------------------------- cash flows
 
     String insertCashFlow(Candidate candidate, String userId, String dateYyyyMmDd)

@@ -1,6 +1,7 @@
 export type Tab =
   | 'dashboard'
   | 'cashflows'
+  | 'categories'
   | 'budgets'
   | 'goals'
   | 'actuals'
@@ -28,6 +29,15 @@ export interface Account {
   name: string
   kind: 'cash' | 'bank' | 'other'
   opening_balance: number
+  created_at?: string
+}
+
+/** A reusable, user-managed classification name. */
+export interface AppCategory {
+  id: string
+  user_id: string
+  name: string
+  kind: FlowKind
   created_at?: string
 }
 
@@ -236,6 +246,7 @@ export interface LoanPayment {
 
 export interface AppData {
   profile: Profile
+  categories: AppCategory[]
   accounts: Account[]
   transfers: Transfer[]
   monthlyIncomes: MonthlyIncome[]
@@ -350,6 +361,7 @@ export interface SimulationOptions {
 
 export type NewAccount = Omit<Account, 'id' | 'user_id' | 'created_at'>
 export type NewTransfer = Omit<Transfer, 'id' | 'user_id' | 'created_at'>
+export type NewCategory = Omit<AppCategory, 'id' | 'user_id' | 'created_at'>
 export type NewCashFlow = Omit<CashFlow, 'id' | 'user_id' | 'created_at'>
 export type NewLoan = Omit<Loan, 'id' | 'user_id' | 'created_at'>
 export type NewLoanPayment = Omit<LoanPayment, 'id' | 'user_id' | 'created_at' | 'applied_to_balance'>
@@ -363,6 +375,9 @@ export type NewActual = Omit<Actual, 'id' | 'user_id' | 'created_at'>
 
 export interface AppActions {
   saveProfile(patch: Partial<Profile>): Promise<void>
+  addCategory(input: NewCategory): Promise<void>
+  renameCategory(id: string, name: string): Promise<void>
+  deleteCategory(id: string): Promise<void>
   addAccount(input: NewAccount): Promise<void>
   updateAccount(id: string, patch: Partial<NewAccount>): Promise<void>
   deleteAccount(id: string): Promise<void>
