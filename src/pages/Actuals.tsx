@@ -4,6 +4,7 @@ import Modal from '../components/Modal'
 import { actualFromEvent, parseActualCsv } from '../lib/actuals'
 import { isSmsImport } from '../lib/data'
 import { formatDate, formatMoney } from '../lib/format'
+import { toDateInputValue } from '../lib/schedule'
 import type { AppActions, AppData, FlowEvent, Simulation } from '../lib/types'
 
 interface Props {
@@ -28,9 +29,12 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
 
   const events = useMemo(() => simulation.months.flatMap((month) => month.events), [simulation.months])
   const recordedKeys = useMemo(() => new Set(data.actuals.map((actual) => actual.event_key)), [data.actuals])
+  const today = toDateInputValue()
   const pending = useMemo(
-    () => events.filter((event) => !recordedKeys.has(event.id)).sort((a, b) => a.date.localeCompare(b.date)),
-    [events, recordedKeys],
+    () => events
+      .filter((event) => !recordedKeys.has(event.id) && event.date <= today)
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    [events, recordedKeys, today],
   )
 
   const rows = useMemo(() => data.actuals
@@ -55,6 +59,10 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
     const value = Number(amount)
     if (!event) {
       onNotify('Choose a planned occurrence first.')
+      return
+    }
+    if (event.date > toDateInputValue()) {
+      onNotify('Record actual amounts only on or after the planned date.')
       return
     }
     if (!Number.isFinite(value) || value < 0) {

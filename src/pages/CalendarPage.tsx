@@ -267,6 +267,10 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
 
   async function recordActual(event: FlowEvent) {
     const amount = Number(actualAmount)
+    if (event.date > toDateInputValue()) {
+      onNotify('Actual amounts can only be recorded on or after the planned date.')
+      return
+    }
     if (!Number.isFinite(amount) || amount < 0) {
       onNotify('Enter a valid actual amount.')
       return

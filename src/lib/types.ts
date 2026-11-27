@@ -137,13 +137,21 @@ export interface CashFlowSkip {
   created_at?: string
 }
 
+export type BudgetPeriod = 'monthly' | 'yearly' | 'one_time'
+
 export interface Budget {
   id: string
   user_id: string
   category: string
+  /** Allocation amount. Monthly budgets use it as a monthly limit. */
   monthly_limit: number
-  /** Unused budget carries into the next month (overspend carries too). */
+  /** Unused monthly budget carries into the next month (overspend carries too). */
   rollover: boolean
+  /** Legacy rows are monthly; one_time and yearly allocations use start_date. */
+  period?: BudgetPeriod
+  start_date?: string | null
+  /** Optional label so multiple allocations can share a category. */
+  name?: string
   created_at?: string
 }
 
@@ -395,6 +403,7 @@ export interface AppActions {
   upsertCashFlowSkip(input: NewCashFlowSkip): Promise<void>
   deleteCashFlowSkip(id: string): Promise<void>
   upsertBudget(input: NewBudget): Promise<void>
+  updateBudget(id: string, patch: Partial<NewBudget>): Promise<void>
   deleteBudget(id: string): Promise<void>
   upsertGoal(input: NewGoal): Promise<void>
   updateGoal(id: string, patch: Partial<NewGoal>): Promise<void>

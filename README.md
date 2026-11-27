@@ -29,7 +29,7 @@ you can try everything immediately — data is stored in that browser only.
 - Calendar view: drag scheduled incomes and expenses to another date, or click an entry to move, duplicate, split, record an actual or delete it. Moves shift money between months and update the balance carried forward; duplicates and splits are saved as one-time entries.
   - Delete offers **just this date** (skips one occurrence, with a restore chip) or **whole entry** (deletes the underlying recurring cash flow). For expected monthly income the choices are **just this month** or **from this month onward**.
   - Recorded actuals are shown with a check on the calendar chip and feed budgets and the Actual vs plan page.
-- Category budgets: monthly limits per expense category, optional rollover of unused (or overspent) amounts, and a month-by-month comparison of planned, recorded and spent amounts.
+- Budgets with monthly, yearly and one-time allocations. Monthly limits can roll forward; dated allocations count only recorded actuals, so a future plan is never shown as spent. Future-dated expense cash flows appear as allocations too, and actual amounts can only be recorded on or after the planned date.
 - Goals & sinking funds: target, current savings, monthly contribution and target month, with required monthly amount, projected gap and a check against the average forecast surplus.
 - Planned vs actual: record the real amount for any forecast occurrence from the calendar or the Actual vs plan page, or import a CSV with `date,name,amount` columns. Only rows that match a planned occurrence are imported.
 - Loans with original amount, outstanding balance, interest rate, EMI, due day and tenure.
@@ -70,7 +70,9 @@ Open http://localhost:5173. Without a `.env.local` file you will be in local dem
    for every new user. Existing projects get their cash/bank balances and default categories
    backfilled. Re-run this file whenever you upgrade the app so new tables and policies are added;
    [`supabase/migrations/002_multi_accounts.sql`](supabase/migrations/002_multi_accounts.sql)
-   contains just the newer accounts/transfers/categories changes if you want a shorter upgrade.
+   contains just the accounts/transfers/categories changes, and
+   [`supabase/migrations/003_budget_periods.sql`](supabase/migrations/003_budget_periods.sql)
+   adds monthly/yearly/one-time budget columns. Both migration files are safe to re-run.
 3. Copy `.env.example` to `.env.local` and fill in your project URL and anon public key:
 
    ```bash
@@ -200,7 +202,7 @@ src/
   lib/
     advice.ts             recommendations based on the current plan
     actuals.ts            actual creation and CSV import helpers
-    budgets.ts            per-category budget and rollover calculations
+    budgets.ts            monthly/yearly/one-time allocation and rollover calculations
     categories.ts         default category seeds and reusable-list helpers
     data.ts               Supabase/local demo persistence, auth and JSON export/import
     format.ts             currency and date formatting

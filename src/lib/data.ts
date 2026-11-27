@@ -1,3 +1,4 @@
+import { budgetKey } from './budgets'
 import { defaultCategories, defaultCategoryId } from './categories'
 import { toDateInputValue } from './schedule'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
@@ -270,6 +271,7 @@ function ensureNumbers(row: Record<string, unknown>): Record<string, unknown> {
     'income_growth_pct',
     'expense_inflation_pct',
     'amount',
+    'monthly_limit',
     'principal',
     'outstanding',
     'interest_rate',
@@ -403,6 +405,9 @@ function normalizeData(data: AppData): AppData {
       ...budget,
       monthly_limit: Number(budget.monthly_limit) || 0,
       rollover: budget.rollover ?? false,
+      period: budget.period === 'yearly' || budget.period === 'one_time' ? budget.period : 'monthly',
+      start_date: budget.start_date || '1970-01-01',
+      name: budget.name ?? '',
     })),
     goals: (raw.goals ?? []).map((goal) => ({
       ...goal,
@@ -1057,10 +1062,21 @@ export async function deleteCashFlowSkip(user: AuthUser, id: string): Promise<vo
   }))
 }
 
-export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<Budget> {
-  const row: Budget = {
+function normalizeBudgetInput(input: BudgetInput): BudgetInput {
+  return {
     ...input,
     monthly_limit: Math.max(0, Number(input.monthly_limit) || 0),
+    period: input.period === 'yearly' || input.period === 'one_time' ? input.period : 'monthly',
+    start_date: input.start_date || '1970-01-01',
+    name: (input.name ?? '').trim(),
+    rollover: input.period === 'yearly' || input.period === 'one_time' ? false : input.rollover !== false,
+  }
+}
+
+export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<Budget> {
+  const clean = normalizeBudgetInput(input)
+  const row: Budget = {
+    ...clean,
     id: makeId(),
     user_id: user.id,
   }
@@ -1070,7 +1086,7 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
     void _created
     const { data, error } = await supabase
       .from('budgets')
-      .upsert(insertRow, { onConflict: 'user_id,category' })
+      .upsert(insertRow, { onConflict: 'user_id,category,period,start_date' })
       .select()
       .single()
     if (error) throw error
@@ -1080,10 +1096,38 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
     ...current,
     budgets: [
       row,
-      ...current.budgets.filter((budget) => budget.category !== input.category),
-    ].sort((a, b) => a.category.localeCompare(b.category)),
+      ...current.budgets.filter((budget) => budgetKey(budget) !== budgetKey(row)),
+    ].sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
   }))
   return row
+}
+
+export async function updateBudget(user: AuthUser, id: string, patch: Partial<BudgetInput>): Promise<void> {
+  const clean: Partial<BudgetInput> = { ...patch }
+  if (clean.monthly_limit !== undefined) clean.monthly_limit = Math.max(0, Number(clean.monthly_limit) || 0)
+  if (clean.name !== undefined) clean.name = clean.name.trim()
+  if (clean.start_date !== undefined) clean.start_date = clean.start_date || '1970-01-01'
+  if (clean.period !== undefined && clean.period !== 'monthly') clean.rollover = false
+  if (usingSupabase && supabase) {
+    const { error } = await supabase.from('budgets').update(clean).eq('id', id).eq('user_id', user.id)
+    if (error) throw error
+    return
+  }
+  await updateLocal(user, (data) => ({
+    ...data,
+    budgets: data.budgets
+      .map((budget) => {
+        if (budget.id !== id) return budget
+        const updated = normalizeBudgetInput({ ...budget, ...clean })
+        return {
+          ...updated,
+          id: budget.id,
+          user_id: budget.user_id,
+          created_at: budget.created_at,
+        }
+      })
+      .sort((a, b) => budgetKey(a).localeCompare(budgetKey(b))),
+  }))
 }
 
 export async function deleteBudget(user: AuthUser, id: string): Promise<void> {
@@ -1149,6 +1193,9 @@ export async function upsertActual(user: AuthUser, input: ActualInput): Promise<
     amount: Math.max(0, Number(input.amount) || 0),
     id: makeId(),
     user_id: user.id,
+  }
+  if (row.date > toDateInputValue() && !isSmsImport(row)) {
+    throw new Error('Record actual amounts only on or before the planned date.')
   }
   if (usingSupabase && supabase) {
     const { id: _id, created_at: _created, ...insertRow } = row
@@ -1583,7 +1630,7 @@ function mergeData(current: AppData, incoming: AppData): AppData {
       [...current.cashFlowSkips, ...incoming.cashFlowSkips],
       (row) => `${row.cash_flow_id}|${row.date}`,
     ),
-    budgets: by([...current.budgets, ...incoming.budgets], (row) => row.category),
+    budgets: by([...current.budgets, ...incoming.budgets], (row) => budgetKey(row)),
     goals: by([...current.goals, ...incoming.goals], (row) => row.id),
     vendorRules: by([...current.vendorRules, ...incoming.vendorRules], (row) => row.vendor_key),
     actuals: by([...current.actuals, ...incoming.actuals], (row) => row.event_key),
@@ -1657,7 +1704,7 @@ export async function importDataExport(
   await writeRows('cash_flow_overrides', imported.cashFlowOverrides, 'user_id,cash_flow_id,month')
   await writeRows('cash_flow_moves', imported.cashFlowMoves, 'user_id,cash_flow_id,from_date')
   await writeRows('cash_flow_skips', imported.cashFlowSkips, 'user_id,cash_flow_id,date')
-  await writeRows('budgets', imported.budgets, 'user_id,category')
+  await writeRows('budgets', imported.budgets, 'user_id,category,period,start_date')
   await writeRows('goals', imported.goals)
   await writeRows('vendor_rules', imported.vendorRules, 'user_id,vendor_key')
   await writeRows('loans', imported.loans)

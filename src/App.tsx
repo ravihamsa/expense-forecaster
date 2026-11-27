@@ -126,6 +126,7 @@ export default function App() {
       upsertCashFlowSkip: (input) => run(() => api.upsertCashFlowSkip(user!, input).then(() => undefined), 'Entry skipped for this date.'),
       deleteCashFlowSkip: (id) => run(() => api.deleteCashFlowSkip(user!, id), 'Entry restored.'),
       upsertBudget: (input) => run(() => api.upsertBudget(user!, input).then(() => undefined), 'Budget saved.'),
+      updateBudget: (id, patch) => run(() => api.updateBudget(user!, id, patch), 'Budget updated.'),
       deleteBudget: (id) => run(() => api.deleteBudget(user!, id), 'Budget removed.'),
       upsertGoal: (input) => run(() => api.upsertGoal(user!, input).then(() => undefined), 'Goal added.'),
       updateGoal: (id, patch) => run(() => api.updateGoal(user!, id, patch), 'Goal updated.'),

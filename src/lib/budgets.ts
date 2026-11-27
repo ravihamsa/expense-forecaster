@@ -1,4 +1,6 @@
-import type { AppData, Budget, MonthProjection } from './types'
+import type { AppData, Budget, BudgetPeriod, FlowEvent, MonthProjection } from './types'
+
+const LEGACY_START_DATE = '1970-01-01'
 
 export interface BudgetMonthStatus {
   key: string
@@ -10,6 +12,8 @@ export interface BudgetMonthStatus {
   carriedOut: number
   available: number
   remaining: number
+  /** Whether this allocation applies to this projection month. */
+  active: boolean
 }
 
 export interface BudgetStatus {
@@ -19,36 +23,117 @@ export interface BudgetStatus {
   recordedTotal: number
   spentTotal: number
   currentRemaining: number
+  currentRow?: BudgetMonthStatus
+  periodLabel: string
+}
+
+export function budgetPeriod(budget: Budget): BudgetPeriod {
+  return budget.period === 'yearly' || budget.period === 'one_time' ? budget.period : 'monthly'
+}
+
+export function budgetStartDate(budget: Budget): string {
+  return budget.start_date || LEGACY_START_DATE
+}
+
+export function budgetKey(budget: Budget): string {
+  return `${budget.category}|${budgetPeriod(budget)}|${budgetStartDate(budget)}`
+}
+
+export function budgetTitle(budget: Budget): string {
+  return budget.name?.trim() || budget.category
+}
+
+export function budgetPeriodLabel(budget: Budget): string {
+  const period = budgetPeriod(budget)
+  if (period === 'yearly') return `Yearly · from ${budgetStartDate(budget).slice(0, 7)}`
+  if (period === 'one_time') return `One-time · ${budgetStartDate(budget)}`
+  return budget.rollover ? 'Monthly · rollover' : 'Monthly'
+}
+
+function categoryEvents(month: MonthProjection, category: string): FlowEvent[] {
+  return month.events.filter((event) => event.kind === 'expense' && event.category === category)
+}
+
+function plannedAmount(events: FlowEvent[]): number {
+  return events.reduce((sum, event) => sum + event.amount, 0)
+}
+
+function recordedAmount(
+  events: FlowEvent[],
+  actuals: Map<string, { amount: number }>,
+): number {
+  return events.reduce((sum, event) => sum + (actuals.get(event.id)?.amount ?? 0), 0)
+}
+
+function yearlyCycleStartYear(startDate: string, month: MonthProjection): number | null {
+  const startYear = Number(startDate.slice(0, 4)) || 1970
+  const startMonth = Number(startDate.slice(5, 7)) - 1
+  if (!Number.isFinite(startMonth) || startMonth < 0 || startMonth > 11) return null
+  let year = month.year
+  if (month.monthIndex < startMonth) year -= 1
+  return year >= startYear ? year : null
 }
 
 /**
- * Builds a per-category budget with optional rollover. Each planned event uses
- * its recorded amount when one exists, otherwise the forecast amount, so
- * partially recorded months are handled correctly.
+ * Builds per-allocation statuses. Legacy monthly budgets keep their original
+ * behaviour: each month gets the full limit, rollover carries forward, and an
+ * unrecorded forecast event counts as spent. Yearly and one-time allocations
+ * are dated, apply only in their window, and count only recorded actuals so a
+ * future plan is not reported as money already spent.
  */
 export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): BudgetStatus[] {
   const actuals = new Map((data.actuals ?? []).map((actual) => [actual.event_key, actual]))
 
   return (data.budgets ?? []).map((budget) => {
+    const period = budgetPeriod(budget)
+    const startDate = budgetStartDate(budget)
+    const amount = Math.max(0, Number(budget.monthly_limit) || 0)
     let carried = 0
     let plannedTotal = 0
     let recordedTotal = 0
     let spentTotal = 0
+    const cycleRecorded = new Map<number, number>()
+
     const rows = months.map((month) => {
-      const events = month.events.filter(
-        (event) => event.kind === 'expense' && event.category === budget.category,
-      )
-      const planned = events.reduce((sum, event) => sum + event.amount, 0)
-      const recorded = events.reduce((sum, event) => sum + (actuals.get(event.id)?.amount ?? 0), 0)
-      const spent = events.reduce(
-        (sum, event) => sum + (actuals.get(event.id)?.amount ?? event.amount),
-        0,
-      )
-      const carriedIn = budget.rollover ? carried : 0
-      const available = budget.monthly_limit + carriedIn
-      const remaining = available - spent
-      const carriedOut = budget.rollover ? remaining : 0
-      carried = carriedOut
+      const events = categoryEvents(month, budget.category)
+      const planned = plannedAmount(events)
+      const recorded = recordedAmount(events, actuals)
+      let spent = recorded
+      let carriedIn = 0
+      let available = 0
+      let remaining = 0
+      let carriedOut = 0
+      let active = true
+
+      if (period === 'monthly') {
+        // Preserve the original monthly-limit and rollover calculation.
+        spent = events.reduce(
+          (sum, event) => sum + (actuals.get(event.id)?.amount ?? event.amount),
+          0,
+        )
+        carriedIn = budget.rollover ? carried : 0
+        available = amount + carriedIn
+        remaining = available - spent
+        carriedOut = budget.rollover ? remaining : 0
+        carried = carriedOut
+      } else if (period === 'yearly') {
+        const cycleYear = yearlyCycleStartYear(startDate, month)
+        if (cycleYear !== null) {
+          active = true
+          const running = (cycleRecorded.get(cycleYear) ?? 0) + recorded
+          cycleRecorded.set(cycleYear, running)
+          available = amount - running
+          remaining = available
+        }
+      } else {
+        const targetMonth = startDate.slice(0, 7)
+        active = month.key === targetMonth
+        if (active) {
+          available = amount
+          remaining = amount - recorded
+        }
+      }
+
       plannedTotal += planned
       recordedTotal += recorded
       spentTotal += spent
@@ -62,16 +147,20 @@ export function buildBudgetStatuses(data: AppData, months: MonthProjection[]): B
         carriedOut,
         available,
         remaining,
+        active,
       }
     })
 
+    const currentRow = rows.find((row) => row.active) ?? rows[0]
     return {
       budget,
       months: rows,
       plannedTotal,
       recordedTotal,
       spentTotal,
-      currentRemaining: rows[0]?.remaining ?? budget.monthly_limit,
+      currentRemaining: currentRow && currentRow.active ? currentRow.remaining : amount,
+      currentRow,
+      periodLabel: budgetPeriodLabel(budget),
     }
   })
 }

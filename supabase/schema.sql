@@ -199,18 +199,37 @@ create policy "cash_flow_skips_update_own" on public.cash_flow_skips
 create policy "cash_flow_skips_delete_own" on public.cash_flow_skips
   for delete to authenticated using (auth.uid() = user_id);
 
--- Monthly spending limits by category.
+-- Spending allocations by category: monthly limits, yearly totals or one-time amounts.
 create table if not exists public.budgets (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   category text not null,
   monthly_limit numeric(14, 2) not null check (monthly_limit >= 0),
   rollover boolean not null default false,
+  period text not null default 'monthly',
+  start_date date not null default '1970-01-01',
+  name text not null default '',
   created_at timestamptz not null default now(),
-  unique (user_id, category)
+  unique (user_id, category, period, start_date)
 );
 
+-- Existing projects need the new columns and a period-aware uniqueness key.
+alter table public.budgets add column if not exists period text not null default 'monthly';
+alter table public.budgets add column if not exists start_date date not null default '1970-01-01';
+alter table public.budgets add column if not exists name text not null default '';
+do $$
+begin
+  alter table public.budgets add constraint budgets_period_check
+    check (period in ('monthly', 'yearly', 'one_time'));
+exception when duplicate_object then null;
+end;
+$$;
+alter table public.budgets drop constraint if exists budgets_user_id_category_key;
+create unique index if not exists budgets_user_category_period_start_uidx
+  on public.budgets(user_id, category, period, start_date);
+
 create index if not exists budgets_user_idx on public.budgets(user_id);
+create index if not exists budgets_period_start_idx on public.budgets(user_id, start_date);
 
 alter table public.budgets enable row level security;
 drop policy if exists "budgets_select_own" on public.budgets;
