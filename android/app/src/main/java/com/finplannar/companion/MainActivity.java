@@ -97,6 +97,7 @@ public final class MainActivity extends Activity {
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         content.addView(password);
 
+        final Button[] signInButton = new Button[1];
         final Button signIn = button("Sign in", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -106,7 +107,7 @@ public final class MainActivity extends Activity {
                     toast("Enter your email and password");
                     return;
                 }
-                signIn.setEnabled(false);
+                signInButton[0].setEnabled(false);
                 setStatus("Signing in…");
                 executor.execute(new Runnable() {
                     @Override
@@ -124,7 +125,7 @@ public final class MainActivity extends Activity {
                                 @Override
                                 public void run() {
                                     setStatus("Sign-in failed: " + message(error));
-                                    signIn.setEnabled(true);
+                                    signInButton[0].setEnabled(true);
                                     toast("Sign-in failed: " + message(error));
                                 }
                             });
@@ -133,6 +134,7 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+        signInButton[0] = signIn;
         content.addView(signIn);
         statusView = note("");
         content.addView(statusView);
