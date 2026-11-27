@@ -676,8 +676,7 @@ export async function addCategory(user: AuthUser, input: CategoryInput): Promise
   }
   const row: AppCategory = { ...input, id: makeId(), user_id: user.id, name, kind }
   if (usingSupabase && supabase) {
-    const { id: _id, created_at: _created, ...insertRow } = row
-    void _id
+    const { created_at: _created, ...insertRow } = row
     void _created
     const { error } = await supabase.from('categories').insert(insertRow)
     if (error && !isMissingTable(error.code)) throw error
@@ -759,8 +758,7 @@ export async function addAccount(user: AuthUser, input: AccountInput): Promise<A
   }
   if (!row.name) throw new Error('Please name this account.')
   if (usingSupabase && supabase) {
-    const { id: _id, created_at: _created, ...insertRow } = row
-    void _id
+    const { created_at: _created, ...insertRow } = row
     void _created
     const { error } = await supabase.from('accounts').insert(insertRow).select().single()
     if (error) throw error

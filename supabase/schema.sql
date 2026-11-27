@@ -415,13 +415,16 @@ create index if not exists loan_payments_loan_idx on public.loan_payments(loan_i
 -- accounts (e.g. a farm-house build fund) get generated ids.
 create table if not exists public.accounts (
   user_id uuid not null references auth.users(id) on delete cascade,
-  id text not null,
+  id text not null default gen_random_uuid()::text,
   name text not null default '',
   kind text not null default 'other' check (kind in ('cash', 'bank', 'other')),
   opening_balance numeric(14, 2) not null default 0 check (opening_balance >= 0),
   created_at timestamptz not null default now(),
   primary key (user_id, id)
 );
+
+-- Existing projects created before this default still need it when re-running.
+alter table public.accounts alter column id set default gen_random_uuid()::text;
 
 create table if not exists public.transfers (
   id uuid primary key default gen_random_uuid(),
@@ -441,13 +444,15 @@ alter table public.actuals add column if not exists account text not null defaul
 -- Reusable category names, editable from the Categories page.
 create table if not exists public.categories (
   user_id uuid not null references auth.users(id) on delete cascade,
-  id text not null,
+  id text not null default gen_random_uuid()::text,
   name text not null,
   kind text not null default 'expense' check (kind in ('income', 'expense')),
   created_at timestamptz not null default now(),
   primary key (user_id, id),
   unique (user_id, kind, name)
 );
+
+alter table public.categories alter column id set default gen_random_uuid()::text;
 
 create index if not exists categories_user_idx on public.categories(user_id);
 create index if not exists accounts_user_idx on public.accounts(user_id);
