@@ -96,13 +96,13 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
         </div>
         <div className="header-actions">
           <button className="btn btn-outline" onClick={() => setModal({ mode: 'add', kind: 'income' })}><Plus size={16} /> Add income</button>
-          <button className="btn btn-primary" onClick={() => setModal({ mode: 'add', kind: 'expense' })}><Plus size={16} /> Add expense</button>
+          <button className="btn btn-primary" onClick={() => setModal({ mode: 'add', kind: 'expense' })}><Plus size={16} /> Add planned spend</button>
         </div>
       </header>
 
       <section className="stat-strip">
         <div><span>Recurring income / mo</span><strong className="positive">{formatMoney(monthlyIncome, currency)}</strong></div>
-        <div><span>Recurring expenses / mo</span><strong className="negative">−{formatMoney(monthlyExpense, currency)}</strong></div>
+        <div><span>Recurring spends / mo</span><strong className="negative">−{formatMoney(monthlyExpense, currency)}</strong></div>
         <div><span>Scheduled plans</span><strong>{scheduledCount}</strong></div>
         <div><span>Total entries</span><strong>{data.cashFlows.length}</strong></div>
       </section>
@@ -112,7 +112,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
           <div className="filter-tabs">
             {(['all', 'income', 'expense', 'sms'] as Filter[]).map((option) => (
               <button key={option} className={filter === option ? 'filter-active' : ''} onClick={() => setFilter(option)}>
-                {option === 'all' ? 'All' : option === 'income' ? 'Income' : option === 'expense' ? 'Expenses' : `SMS (${smsCount})`}
+                {option === 'all' ? 'All' : option === 'income' ? 'Income' : option === 'expense' ? 'Spends' : `SMS (${smsCount})`}
               </button>
             ))}
           </div>
@@ -161,7 +161,7 @@ export default function CashFlows({ data, actions, onNotify }: Props) {
 
       {modal && (
         <Modal
-          title={modal.mode === 'edit' ? 'Edit cash flow' : modal.kind === 'income' ? 'Add income' : 'Add expense'}
+          title={modal.mode === 'edit' ? 'Edit planned entry' : modal.kind === 'income' ? 'Add planned income' : 'Add planned spend'}
           subtitle="Choose how often it happens so forecasts stay accurate."
           onClose={() => setModal(null)}
           wide

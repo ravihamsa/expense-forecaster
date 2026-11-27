@@ -408,6 +408,7 @@ function normalizeData(data: AppData): AppData {
       period: budget.period === 'yearly' || budget.period === 'one_time' ? budget.period : 'monthly',
       start_date: budget.start_date || '1970-01-01',
       name: budget.name ?? '',
+      cash_flow_id: budget.cash_flow_id ?? null,
     })),
     goals: (raw.goals ?? []).map((goal) => ({
       ...goal,
@@ -1069,14 +1070,64 @@ function normalizeBudgetInput(input: BudgetInput): BudgetInput {
     period: input.period === 'yearly' || input.period === 'one_time' ? input.period : 'monthly',
     start_date: input.start_date || '1970-01-01',
     name: (input.name ?? '').trim(),
+    cash_flow_id: input.cash_flow_id ?? null,
     rollover: input.period === 'yearly' || input.period === 'one_time' ? false : input.rollover !== false,
   }
 }
 
+function budgetCashFlowInput(input: BudgetInput, existing?: CashFlow): CashFlowInput {
+  const period = input.period ?? 'monthly'
+  const startDate = period === 'monthly'
+    ? existing?.start_date || `${toDateInputValue().slice(0, 7)}-01`
+    : input.start_date || existing?.start_date || toDateInputValue()
+  return {
+    kind: 'expense',
+    name: (input.name ?? '').trim() || input.category,
+    amount: Math.max(0, Number(input.monthly_limit) || 0),
+    category: input.category,
+    account: existing?.account || 'bank',
+    recurrence: period === 'yearly' ? 'yearly' : period === 'one_time' ? 'one_time' : 'monthly',
+    interval_count: 1,
+    start_date: startDate,
+    end_date: null,
+    note: existing?.note || 'Planned spend',
+  }
+}
+
+async function findBudget(user: AuthUser, id: string): Promise<Budget | undefined> {
+  if (usingSupabase && supabase) {
+    const { data, error } = await supabase
+      .from('budgets')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (error) throw error
+    return (data ?? undefined) as Budget | undefined
+  }
+  return (await loadData(user)).budgets.find((budget) => budget.id === id)
+}
+
+async function findCashFlowForBudget(user: AuthUser, id: string): Promise<CashFlow | undefined> {
+  if (usingSupabase && supabase) {
+    const { data, error } = await supabase
+      .from('cash_flows')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (error) throw error
+    return (data ?? undefined) as CashFlow | undefined
+  }
+  return (await loadData(user)).cashFlows.find((flow) => flow.id === id)
+}
+
 export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<Budget> {
   const clean = normalizeBudgetInput(input)
+  const flow = await addCashFlow(user, budgetCashFlowInput(clean))
   const row: Budget = {
     ...clean,
+    cash_flow_id: flow.id,
     id: makeId(),
     user_id: user.id,
   }
@@ -1103,13 +1154,22 @@ export async function upsertBudget(user: AuthUser, input: BudgetInput): Promise<
 }
 
 export async function updateBudget(user: AuthUser, id: string, patch: Partial<BudgetInput>): Promise<void> {
-  const clean: Partial<BudgetInput> = { ...patch }
-  if (clean.monthly_limit !== undefined) clean.monthly_limit = Math.max(0, Number(clean.monthly_limit) || 0)
-  if (clean.name !== undefined) clean.name = clean.name.trim()
-  if (clean.start_date !== undefined) clean.start_date = clean.start_date || '1970-01-01'
-  if (clean.period !== undefined && clean.period !== 'monthly') clean.rollover = false
+  const current = await findBudget(user, id)
+  if (!current) throw new Error('That planned spend no longer exists.')
+  const merged = normalizeBudgetInput({ ...current, ...patch })
+
+  let cashFlowId = current.cash_flow_id || null
+  const existingFlow = cashFlowId ? await findCashFlowForBudget(user, cashFlowId) : undefined
+  if (cashFlowId && existingFlow) {
+    await updateCashFlow(user, cashFlowId, budgetCashFlowInput(merged, existingFlow))
+  } else {
+    const flow = await addCashFlow(user, budgetCashFlowInput(merged))
+    cashFlowId = flow.id
+  }
+
+  const budgetPatch: Partial<BudgetInput> = { ...patch, cash_flow_id: cashFlowId }
   if (usingSupabase && supabase) {
-    const { error } = await supabase.from('budgets').update(clean).eq('id', id).eq('user_id', user.id)
+    const { error } = await supabase.from('budgets').update(budgetPatch).eq('id', id).eq('user_id', user.id)
     if (error) throw error
     return
   }
@@ -1118,7 +1178,7 @@ export async function updateBudget(user: AuthUser, id: string, patch: Partial<Bu
     budgets: data.budgets
       .map((budget) => {
         if (budget.id !== id) return budget
-        const updated = normalizeBudgetInput({ ...budget, ...clean })
+        const updated = normalizeBudgetInput({ ...budget, ...budgetPatch })
         return {
           ...updated,
           id: budget.id,
@@ -1131,15 +1191,27 @@ export async function updateBudget(user: AuthUser, id: string, patch: Partial<Bu
 }
 
 export async function deleteBudget(user: AuthUser, id: string): Promise<void> {
+  const current = await findBudget(user, id)
+  const cashFlowId = current?.cash_flow_id || null
   if (usingSupabase && supabase) {
     const { error } = await supabase.from('budgets').delete().eq('id', id).eq('user_id', user.id)
     if (error) throw error
+    if (cashFlowId) {
+      const { error: actualError } = await supabase
+        .from('actuals')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('cash_flow_id', cashFlowId)
+      if (actualError) throw actualError
+      await deleteCashFlow(user, cashFlowId)
+    }
     return
   }
   await updateLocal(user, (data) => ({
     ...data,
     budgets: data.budgets.filter((budget) => budget.id !== id),
   }))
+  if (cashFlowId) await deleteCashFlow(user, cashFlowId)
 }
 
 export async function upsertGoal(user: AuthUser, input: GoalInput): Promise<Goal> {
@@ -1554,7 +1626,10 @@ function remapData(data: AppData, userId: string): AppData {
     ...row, id: freshId(row.id), user_id: userId, cash_flow_id: freshId(row.cash_flow_id),
   }))
   const budgets = data.budgets.map((row) => ({
-    ...row, id: freshId(row.id), user_id: userId,
+    ...row,
+    id: freshId(row.id),
+    user_id: userId,
+    cash_flow_id: row.cash_flow_id ? freshId(row.cash_flow_id) : null,
   }))
   const goals = data.goals.map((row) => ({
     ...row, id: freshId(row.id), user_id: userId,

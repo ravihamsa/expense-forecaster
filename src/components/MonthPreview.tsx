@@ -231,9 +231,9 @@ export default function MonthPreview({
 
       <div className="preview-stats">
         <div><span>Money in</span><strong className="positive">{formatMoney(moneyIn, currency)}</strong></div>
-        <div><span>Cash-flow expenses</span><strong>{formatMoney(month.expenses, currency)}</strong></div>
+        <div><span>Planned spends</span><strong>{formatMoney(month.expenses, currency)}</strong></div>
         <div><span>Loan payments</span><strong>{formatMoney(month.loanPayments + month.extraPayment, currency)}</strong></div>
-        <div><span>Net this month</span><strong className={month.net >= 0 ? 'positive' : 'negative'}>{formatSigned(month.net, currency)}</strong></div>
+        <div><span>Needed / free</span><strong className={month.net >= 0 ? 'positive' : 'negative'}>{formatSigned(month.net, currency)}</strong></div>
         <div><span>Closing balance</span><strong>{formatMoney(month.closingBalance, currency)}</strong></div>
       </div>
 
@@ -260,7 +260,7 @@ export default function MonthPreview({
         <span>Balance at month end: <strong>{formatMoney(month.closingBalance, currency)}</strong></span>
         <div className="preview-footer-actions">
           <button className="btn btn-outline btn-small" onClick={onAddIncome}><Plus size={14} /> Add income</button>
-          <button className="btn btn-outline btn-small" onClick={onAddExpense}><Plus size={14} /> Add expense</button>
+          <button className="btn btn-outline btn-small" onClick={onAddExpense}><Plus size={14} /> Add planned spend</button>
         </div>
       </div>
     </section>

@@ -209,6 +209,7 @@ create table if not exists public.budgets (
   period text not null default 'monthly',
   start_date date not null default '1970-01-01',
   name text not null default '',
+  cash_flow_id uuid references public.cash_flows(id) on delete set null,
   created_at timestamptz not null default now(),
   unique (user_id, category, period, start_date)
 );
@@ -217,6 +218,7 @@ create table if not exists public.budgets (
 alter table public.budgets add column if not exists period text not null default 'monthly';
 alter table public.budgets add column if not exists start_date date not null default '1970-01-01';
 alter table public.budgets add column if not exists name text not null default '';
+alter table public.budgets add column if not exists cash_flow_id uuid references public.cash_flows(id) on delete set null;
 do $$
 begin
   alter table public.budgets add constraint budgets_period_check
@@ -230,6 +232,7 @@ create unique index if not exists budgets_user_category_period_start_uidx
 
 create index if not exists budgets_user_idx on public.budgets(user_id);
 create index if not exists budgets_period_start_idx on public.budgets(user_id, start_date);
+create index if not exists budgets_cash_flow_idx on public.budgets(user_id, cash_flow_id);
 
 alter table public.budgets enable row level security;
 drop policy if exists "budgets_select_own" on public.budgets;

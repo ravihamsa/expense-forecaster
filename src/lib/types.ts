@@ -152,6 +152,8 @@ export interface Budget {
   start_date?: string | null
   /** Optional label so multiple allocations can share a category. */
   name?: string
+  /** Matching expense cash flow, so a planned spend appears everywhere. */
+  cash_flow_id?: string | null
   created_at?: string
 }
 

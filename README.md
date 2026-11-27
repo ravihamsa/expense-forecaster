@@ -72,7 +72,9 @@ Open http://localhost:5173. Without a `.env.local` file you will be in local dem
    [`supabase/migrations/002_multi_accounts.sql`](supabase/migrations/002_multi_accounts.sql)
    contains just the accounts/transfers/categories changes, and
    [`supabase/migrations/003_budget_periods.sql`](supabase/migrations/003_budget_periods.sql)
-   adds monthly/yearly/one-time budget columns. Both migration files are safe to re-run.
+   adds monthly/yearly/one-time budget columns, and
+   [`supabase/migrations/004_budget_cash_flows.sql`](supabase/migrations/004_budget_cash_flows.sql)
+   links each planned spend to its cash-flow entry. All migration files are safe to re-run.
 3. Copy `.env.example` to `.env.local` and fill in your project URL and anon public key:
 
    ```bash

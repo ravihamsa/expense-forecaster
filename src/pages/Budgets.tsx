@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Pencil, Plus, Repeat, Trash2, Wallet } from 'lucide-react'
+import { ChevronDown, ChevronRight, Link2, Pencil, Plus, Repeat, Trash2, Wallet } from 'lucide-react'
 import Modal from '../components/Modal'
 import { budgetPeriodLabel, budgetTitle, buildBudgetStatuses } from '../lib/budgets'
 import type { BudgetExpense } from '../lib/budgets'
@@ -139,6 +139,15 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
     }
   }
 
+  async function syncPlan(budget: Budget) {
+    try {
+      await actions.updateBudget(budget.id, {})
+      onNotify('Added to Cash flow and Month preview.')
+    } catch (caught) {
+      onNotify(caught instanceof Error ? caught.message : 'Could not add this plan to Cash flow.')
+    }
+  }
+
   const activePeriod = form.period ?? 'monthly'
 
   return (
@@ -205,7 +214,10 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                     </button>
                     <div className="budget-name">
                       <strong>{name}</strong>
-                      <span>{subtitle}{!first?.active ? ' · not in forecast window' : ''}</span>
+                      <span>
+                        {subtitle}
+                        {!status.budget.cash_flow_id ? ' · add to Cash flow' : !first?.active ? ' · not in forecast window' : ''}
+                      </span>
                     </div>
                     <strong className="budget-limit">
                       {formatMoney(status.budget.monthly_limit, currency)}
@@ -221,8 +233,11 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                       {formatSigned(status.currentRemaining, currency)}
                     </strong>
                     <div className="row-actions">
-                      <button className="icon-button" title="Edit budget" onClick={() => openEdit(status.budget)}><Pencil size={16} /></button>
-                      <button className="icon-button danger" title="Delete budget" onClick={() => void remove(status.budget)}><Trash2 size={16} /></button>
+                      {!status.budget.cash_flow_id && (
+                        <button className="icon-button" title="Add to Cash flow" onClick={() => void syncPlan(status.budget)}><Link2 size={16} /></button>
+                      )}
+                      <button className="icon-button" title="Edit plan" onClick={() => openEdit(status.budget)}><Pencil size={16} /></button>
+                      <button className="icon-button danger" title="Delete plan" onClick={() => void remove(status.budget)}><Trash2 size={16} /></button>
                     </div>
                   </div>
                   {isOpen && (
