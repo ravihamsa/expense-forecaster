@@ -35,6 +35,38 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { categorySlug } from '../lib/categories'
 
+/** Keys users can pick from; "auto" falls back to name-based matching. */
+export const CATEGORY_ICON_CHOICES: { key: string; label: string }[] = [
+  { key: 'auto', label: 'Auto' },
+  { key: 'housing', label: 'Home' },
+  { key: 'utilities', label: 'Utilities' },
+  { key: 'groceries', label: 'Groceries' },
+  { key: 'transport', label: 'Transport' },
+  { key: 'fuel', label: 'Fuel' },
+  { key: 'insurance', label: 'Insurance' },
+  { key: 'health', label: 'Health' },
+  { key: 'education', label: 'Education' },
+  { key: 'shopping', label: 'Shopping' },
+  { key: 'dining', label: 'Dining' },
+  { key: 'entertainment', label: 'Entertainment' },
+  { key: 'subscriptions', label: 'Subscriptions' },
+  { key: 'travel', label: 'Travel' },
+  { key: 'lifestyle', label: 'Lifestyle' },
+  { key: 'hobbies', label: 'Hobbies' },
+  { key: 'investments', label: 'Investments' },
+  { key: 'salary', label: 'Salary' },
+  { key: 'business', label: 'Business' },
+  { key: 'freelance', label: 'Freelance' },
+  { key: 'interest', label: 'Interest' },
+  { key: 'dividends', label: 'Dividends' },
+  { key: 'gifts', label: 'Gifts' },
+  { key: 'pet', label: 'Pet' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'internet', label: 'Internet' },
+  { key: 'savings', label: 'Savings' },
+  { key: 'other', label: 'Other' },
+]
+
 const ICONS: Record<string, LucideIcon> = {
   housing: House,
   home: House,
@@ -115,15 +147,21 @@ export function categoryIcon(name: string): LucideIcon {
   return MoreHorizontal
 }
 
+export function categoryIconByKey(key: string): LucideIcon {
+  return ICONS[key] ?? MoreHorizontal
+}
+
 interface Props {
   name: string
+  /** Explicit icon key saved on the category; empty means automatic. */
+  icon?: string | null
   size?: number
   small?: boolean
   className?: string
 }
 
-export default function CategoryBadge({ name, size = 15, small = false, className = '' }: Props) {
-  const Icon = categoryIcon(name)
+export default function CategoryBadge({ name, icon, size = 15, small = false, className = '' }: Props) {
+  const Icon = (icon && ICONS[icon]) || categoryIcon(name)
   const style = { '--cat-color': categoryColor(name) } as CSSProperties
   return (
     <span

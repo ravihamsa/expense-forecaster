@@ -3,6 +3,7 @@ import { CheckCircle2, FileSpreadsheet, Plus, Search, Trash2, Upload } from 'luc
 import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { actualFromEvent, parseActualCsv } from '../lib/actuals'
+import { categoryIconKey } from '../lib/categories'
 import { isSmsImport } from '../lib/data'
 import { formatDate, formatMoney } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
@@ -354,7 +355,11 @@ export default function Actuals({ data, actions, simulation, currency, onNotify 
                     onChange={() => toggleSelect(actual.id)}
                   />
                 ) : <span />}
-                <CategoryBadge name={categoryLabel(actual)} small />
+                <CategoryBadge
+                  name={categoryLabel(actual)}
+                  icon={categoryIconKey(data.categories, categoryLabel(actual), actual.kind)}
+                  small
+                />
                 <div className="actual-main">
                   <strong>{actual.name}{isSmsImport(actual) && <span className="mini-tag" title="Imported from SMS">SMS</span>}</strong>
                   <span>{formatDate(actual.date)} · {categoryLabel(actual)}{actual.note ? ` · ${actual.note}` : ''}</span>

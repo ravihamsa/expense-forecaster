@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import CategoryBadge from './CategoryBadge'
 import { categoryColor } from './CategoryBadge'
+import { categoryIconKey } from '../lib/categories'
 import { formatMoney, formatSigned } from '../lib/format'
 import { accountLabel } from '../lib/ledger'
 import type { AppActions, AppData, FlowEvent, MonthProjection } from '../lib/types'
@@ -206,7 +207,12 @@ export default function MonthPreview({
         <span className="preview-date">{shortDate(event.date)}</span>
         <div className="preview-event">
           <span className="preview-event-title">
-            <CategoryBadge name={event.category || (event.kind === 'income' ? 'Income' : 'Other')} small size={12} />
+            <CategoryBadge
+              name={event.category || (event.kind === 'income' ? 'Income' : 'Other')}
+              icon={categoryIconKey(data.categories, event.category || '', event.kind)}
+              small
+              size={12}
+            />
             <strong>{event.name}</strong>
           </span>
           <span>{detail}</span>
@@ -276,7 +282,11 @@ export default function MonthPreview({
           onClick={() => toggleGroup(group.key, kind)}
         >
           {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-          <CategoryBadge name={group.label} small />
+          <CategoryBadge
+            name={group.label}
+            icon={categoryIconKey(data.categories, group.label, group.events[0]?.kind)}
+            small
+          />
           <span className="group-label">{group.label}</span>
           <small>{group.events.length} {group.events.length === 1 ? 'entry' : 'entries'}</small>
           <b className={kind === 'in' ? 'positive' : 'negative'}>

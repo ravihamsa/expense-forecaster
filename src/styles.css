@@ -237,13 +237,19 @@ p { margin: 0; }
 .category-badge-lg { width: 42px; height: 42px; border-radius: 12px; }
 .category-card-head { flex-wrap: wrap; align-items: center; }
 .category-card-head .segmented button { padding: 7px 14px; font-size: 12.5px; }
-.category-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.category-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 10px; }
 .category-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; border: 1px solid var(--border-soft); border-radius: 11px; background: var(--surface-2); }
 .category-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .category-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .category-title strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .category-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .category-usage { display: inline-flex; padding: 2px 7px; border-radius: 999px; background: rgba(45, 212, 167, 0.1); color: var(--teal); font-size: 10px; font-weight: 700; }
+.category-usage b { margin-right: 2px; }
+.icon-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; max-height: 210px; overflow-y: auto; padding: 2px; }
+.icon-choice { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--surface-2); color: var(--muted); cursor: pointer; }
+.icon-choice:hover { border-color: var(--border); color: var(--text); }
+.icon-choice-active { border-color: var(--teal); color: var(--teal); background: rgba(45, 212, 167, 0.08); }
+.icon-choice small { max-width: 100%; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .category-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px; text-align: center; color: var(--muted); }
 .category-empty strong { color: var(--text); font-size: 13px; }
 .category-empty span { font-size: 12px; }

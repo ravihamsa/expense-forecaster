@@ -42,3 +42,15 @@ export function categoriesOfKind(categories: AppCategory[], kind: FlowKind): str
     .map((category) => category.name)
     .sort((a, b) => a.localeCompare(b))
 }
+
+/** Resolve a stored icon key for a category name used outside the Categories page. */
+export function categoryIconKey(
+  categories: AppCategory[],
+  name: string,
+  kind?: FlowKind,
+): string | null {
+  const clean = name.trim().toLowerCase()
+  return categories.find((category) =>
+    category.name.trim().toLowerCase() === clean && (!kind || category.kind === kind),
+  )?.icon ?? null
+}

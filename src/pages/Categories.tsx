@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Pencil, Plus, Tag, Trash2 } from 'lucide-react'
-import CategoryBadge from '../components/CategoryBadge'
+import CategoryBadge, { CATEGORY_ICON_CHOICES, categoryIcon, categoryIconByKey } from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { categoriesOfKind } from '../lib/categories'
 import type { AppActions, AppCategory, AppData, FlowKind, NewCategory } from '../lib/types'
@@ -17,6 +17,7 @@ export default function Categories({ data, actions, onNotify }: Props) {
   const [kind, setKind] = useState<FlowKind>('expense')
   const [modal, setModal] = useState<ModalState | null>(null)
   const [name, setName] = useState('')
+  const [icon, setIcon] = useState('auto')
   const [busy, setBusy] = useState(false)
 
   const categories = useMemo(
@@ -43,11 +44,13 @@ export default function Categories({ data, actions, onNotify }: Props) {
 
   function openAdd() {
     setName('')
+    setIcon('auto')
     setModal({ mode: 'add' })
   }
 
   function openEdit(category: AppCategory) {
     setName(category.name)
+    setIcon(category.icon ?? 'auto')
     setModal({ mode: 'edit', category })
   }
 
@@ -57,10 +60,12 @@ export default function Categories({ data, actions, onNotify }: Props) {
     if (!clean) return onNotify('Enter a category name.')
     try {
       setBusy(true)
+      const selectedIcon = icon === 'auto' ? null : icon
       if (modal.mode === 'edit') {
-        await actions.renameCategory(modal.category.id, clean)
+        if (modal.category.name !== clean) await actions.renameCategory(modal.category.id, clean)
+        await actions.setCategoryIcon(modal.category.id, selectedIcon)
       } else {
-        const input: NewCategory = { name: clean, kind }
+        const input: NewCategory = { name: clean, kind, icon: selectedIcon }
         await actions.addCategory(input)
       }
       setModal(null)
@@ -94,6 +99,7 @@ export default function Categories({ data, actions, onNotify }: Props) {
           <p>Build one list for expenses and one for income. Every cash flow, budget and SMS rule picks from it.</p>
         </div>
         <div className="header-actions">
+          <span className="status-pill pill-blue">{data.categories.length} categories</span>
           <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Add category</button>
         </div>
       </header>
@@ -123,12 +129,12 @@ export default function Categories({ data, actions, onNotify }: Props) {
                 <div className="category-row" key={category.id}>
                   <div className="category-main">
                     <div className="category-title">
-                      <CategoryBadge name={category.name} size={20} className="category-badge-lg" />
+                      <CategoryBadge name={category.name} icon={category.icon} size={20} className="category-badge-lg" />
                       <strong>{category.name}</strong>
                     </div>
                     <div className="category-meta">
                       <span className="category-usage">
-                        {used ? `Used by ${used} item${used === 1 ? '' : 's'}` : 'Unused'}
+                        {used > 0 ? <><b>{used}</b> use{used === 1 ? '' : 's'}</> : 'Unused'}
                       </span>
                       {isOther && <span className="mini-tag">fallback</span>}
                     </div>
@@ -171,6 +177,27 @@ export default function Categories({ data, actions, onNotify }: Props) {
               required
             />
           </label>
+          <div className="field">
+            <span>Icon</span>
+            <div className="icon-picker">
+              {CATEGORY_ICON_CHOICES.map((choice) => {
+                const Icon = choice.key === 'auto' ? categoryIcon(name || 'other') : categoryIconByKey(choice.key)
+                return (
+                  <button
+                    key={choice.key}
+                    type="button"
+                    className={`icon-choice ${icon === choice.key ? 'icon-choice-active' : ''}`}
+                    title={choice.label}
+                    aria-label={choice.label}
+                    onClick={() => setIcon(choice.key)}
+                  >
+                    <Icon size={17} />
+                    <small>{choice.label}</small>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           <div className="form-actions">
             <button type="button" className="btn btn-outline" onClick={() => setModal(null)}>Cancel</button>
             <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={busy}>

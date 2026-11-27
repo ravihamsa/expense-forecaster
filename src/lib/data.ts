@@ -52,6 +52,11 @@ function isMissingTable(code: string | undefined): boolean {
   return code === '42P01' || code === 'PGRST205' || code === 'PGRST116'
 }
 
+/** 42703 is PostgREST's "column does not exist" response. */
+function isMissingSchemaObject(code: string | undefined): boolean {
+  return isMissingTable(code) || code === '42703'
+}
+
 export function isSmsImport(row: { source?: string }): boolean {
   return row.source === 'sms'
 }
@@ -314,7 +319,7 @@ function normalizeData(data: AppData): AppData {
   // built-ins plus any category already used by a row (including SMS imports).
   const categories: AppCategory[] = []
   const categoryKeys = new Set<string>()
-  const addCategory = (row: { id?: string; user_id?: string; name?: string; kind?: string }) => {
+  const addCategory = (row: { id?: string; user_id?: string; name?: string; kind?: string; icon?: string | null }) => {
     const name = (row.name ?? '').trim()
     const kind = row.kind === 'income' ? 'income' : 'expense'
     if (!name) return
@@ -326,6 +331,7 @@ function normalizeData(data: AppData): AppData {
       user_id: row.user_id || userId,
       name,
       kind,
+      icon: row.icon || null,
     })
   }
   ;(raw.categories?.length ? raw.categories : defaultCategories(userId)).forEach(addCategory)
@@ -738,7 +744,7 @@ export async function addCategory(user: AuthUser, input: CategoryInput): Promise
     const { created_at: _created, ...insertRow } = row
     void _created
     const { error } = await supabase.from('categories').insert(insertRow)
-    if (error && !isMissingTable(error.code)) throw error
+    if (error && !isMissingSchemaObject(error.code)) throw error
     if (error) {
       await persistCategories(user, (data) => ({ ...data, categories: [...data.categories, row] }))
     }
@@ -777,6 +783,26 @@ export async function renameCategory(user: AuthUser, id: string, name: string): 
   await persistCategories(user, (data) => ({
     ...remapCategoryReferencesLocally(data, category.kind, from, clean, false),
     categories: data.categories.map((row) => (row.id === id ? { ...row, name: clean } : row)),
+  }))
+}
+
+export async function setCategoryIcon(user: AuthUser, id: string, icon: string | null): Promise<void> {
+  const value = icon || null
+  if (usingSupabase && supabase) {
+    const { error } = await supabase.from('categories').update({ icon: value })
+      .eq('user_id', user.id).eq('id', id)
+    if (error && !isMissingSchemaObject(error.code)) throw error
+    if (error) {
+      await persistCategories(user, (data) => ({
+        ...data,
+        categories: data.categories.map((row) => (row.id === id ? { ...row, icon: value } : row)),
+      }))
+      return
+    }
+  }
+  await persistCategories(user, (data) => ({
+    ...data,
+    categories: data.categories.map((row) => (row.id === id ? { ...row, icon: value } : row)),
   }))
 }
 

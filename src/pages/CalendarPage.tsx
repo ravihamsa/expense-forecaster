@@ -15,6 +15,7 @@ import {
 import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { actualFromEvent } from '../lib/actuals'
+import { categoryIconKey } from '../lib/categories'
 import { formatMoney, formatSigned } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
 import type { AppActions, AppData, FlowEvent, MonthProjection } from '../lib/types'
@@ -502,6 +503,7 @@ export default function CalendarPage({ data, months, actions, onNotify }: Props)
                         <span className="calendar-chip-label">
                           <CategoryBadge
                             name={event.category || (event.kind === 'income' ? 'Income' : 'Other')}
+                            icon={categoryIconKey(data.categories, event.category || '', event.kind)}
                             small
                             size={12}
                           />

@@ -111,6 +111,7 @@ export default function App() {
       saveProfile: (patch) => run(() => api.saveProfile(user!, patch), 'Settings saved.'),
       addCategory: (input) => run(() => api.addCategory(user!, input).then(() => undefined), 'Category added.'),
       renameCategory: (id, name) => run(() => api.renameCategory(user!, id, name), 'Category renamed.'),
+      setCategoryIcon: (id, icon) => run(() => api.setCategoryIcon(user!, id, icon), 'Category icon saved.'),
       deleteCategory: (id) => run(() => api.deleteCategory(user!, id), 'Category removed.'),
       addAccount: (input) => run(() => api.addAccount(user!, input).then(() => undefined), 'Account added.'),
       updateAccount: (id, patch) => run(() => api.updateAccount(user!, id, patch), 'Account updated.'),

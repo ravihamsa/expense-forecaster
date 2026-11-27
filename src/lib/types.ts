@@ -38,6 +38,8 @@ export interface AppCategory {
   user_id: string
   name: string
   kind: FlowKind
+  /** Optional icon key chosen by the user; empty means automatic. */
+  icon?: string | null
   created_at?: string
 }
 
@@ -410,6 +412,7 @@ export interface AppActions {
   saveProfile(patch: Partial<Profile>): Promise<void>
   addCategory(input: NewCategory): Promise<void>
   renameCategory(id: string, name: string): Promise<void>
+  setCategoryIcon(id: string, icon: string | null): Promise<void>
   deleteCategory(id: string): Promise<void>
   addAccount(input: NewAccount): Promise<void>
   updateAccount(id: string, patch: Partial<NewAccount>): Promise<void>

@@ -4,7 +4,7 @@ import CategoryBadge from '../components/CategoryBadge'
 import Modal from '../components/Modal'
 import { budgetPeriodLabel, budgetTitle, buildBudgetStatuses } from '../lib/budgets'
 import type { BudgetExpense } from '../lib/budgets'
-import { categoriesOfKind } from '../lib/categories'
+import { categoriesOfKind, categoryIconKey } from '../lib/categories'
 import { formatDate, formatMoney, formatSigned } from '../lib/format'
 import { toDateInputValue } from '../lib/schedule'
 import type { AppActions, AppData, Budget, BudgetPeriod, NewBudget, Simulation } from '../lib/types'
@@ -207,7 +207,11 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
                     </button>
                     <div className="budget-name">
                       <strong className="budget-name-title">
-                        <CategoryBadge name={status.budget.category} small />
+                        <CategoryBadge
+                          name={status.budget.category}
+                          icon={categoryIconKey(data.categories, status.budget.category, 'expense')}
+                          small
+                        />
                         <span>{name}</span>
                       </strong>
                       <span>
@@ -291,7 +295,11 @@ export default function Budgets({ data, actions, simulation, currency, onNotify 
               <div className="ledger-row" key={event.id}>
                 <div className="ledger-main">
                   <strong className="ledger-main-title">
-                    <CategoryBadge name={event.category} small />
+                    <CategoryBadge
+                      name={event.category}
+                      icon={categoryIconKey(data.categories, event.category, 'expense')}
+                      small
+                    />
                     <span>{event.name}</span>
                   </strong>
                   <span>{monthLabel} · {formatDate(event.date)} · {event.category}</span>

@@ -469,6 +469,7 @@ create table if not exists public.categories (
   id text not null default gen_random_uuid()::text,
   name text not null,
   kind text not null default 'expense' check (kind in ('income', 'expense')),
+  icon text,
   created_at timestamptz not null default now(),
   primary key (user_id, id),
   unique (user_id, kind, name)
