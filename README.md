@@ -104,9 +104,10 @@ so it also works as a backup you can move between browsers.
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) builds and deploys the site on every
 push to `main` (and on manual run from the Actions tab).
 
-1. In GitHub, open **Settings → Pages → Build and deployment** and choose **GitHub Actions** as the
+1. Make sure Actions are enabled under **Settings → Actions → General**.
+2. In GitHub, open **Settings → Pages → Build and deployment** and choose **GitHub Actions** as the
    source. The workflow will configure this automatically on its first run.
-2. Add repository secrets under **Settings → Secrets and variables → Actions → New repository
+3. Add repository secrets under **Settings → Secrets and variables → Actions → New repository
    secret**:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
@@ -114,8 +115,8 @@ push to `main` (and on manual run from the Actions tab).
    Skip these if you want the deployed app to stay in local demo mode. Use the **anon public** key,
    never the service-role key. Re-run the workflow after adding secrets so they are baked into the
    build.
-3. Push to `main`, then open **Actions → Deploy to GitHub Pages** to watch the deployment.
-4. The site will be available at https://ravihamsa.github.io/expense-forecaster/.
+4. Push to `main`, then open **Actions → Deploy to GitHub Pages** to watch the deployment.
+5. The site will be available at https://ravihamsa.github.io/expense-forecaster/.
 
 If you use Supabase, add that URL to **Supabase → Authentication → URL Configuration → Site URL**
 and **Redirect URLs** so email confirmation links return to the deployed app. If you rename the
