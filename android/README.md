@@ -35,21 +35,29 @@ transactions into the same Supabase account.
   **Remove SMS imports** without touching manual entries. Learned vendor preferences are
   stored locally and upserted to `vendor_rules`.
 - **Dashboard.** A signed-in dashboard shows the sum of account opening balances, this
-  month's planned income/expenses from your cash-flow schedules, this month's recorded
-  amounts, and a simple month-end projection. Account names and the currency label come
-  from Supabase.
+  month's planned income/expenses from your cash-flow schedules and monthly incomes, this
+  month's recorded amounts, and a simple month-end projection. Calendar splits are honored
+  through `cash_flow_overrides`, so a split reduces the original entry instead of adding a
+  second full amount. Account names and the currency label come from Supabase.
 - **Cash-flow CRUD.** The **Cash flows** tab lists planned entries from `cash_flows` and
   lets you add, edit or delete them. Name, amount, kind, category, account, schedule, start
   date and repeat interval are editable. SMS-imported rows keep `source = 'sms'` when
   edited. Deleting a plan does not delete recorded actuals.
 - **Month view with editable expenses.** The **Month** tab shows a seven-column calendar
-  with planned and recorded entries. Tap a day to inspect its entries; expense cards offer
-  **Edit planned category** (updates `budgets.monthly_limit`, `name` and `category`) or
-  **Edit recorded category** (updates `actuals.amount`, `name` and `category`). Changes are
-  PATCHed to Supabase for the signed-in user and the month reloads.
+  with planned and recorded entries and **All / Planned / Recorded** filters. Tap a day to
+  inspect its entries; expense cards offer **Edit planned category** (updates
+  `budgets.monthly_limit`, `name` and `category`), **Move planned date** (adds a
+  `budget_moves` row for that occurrence), or **Edit recorded category** (updates
+  `actuals.amount`, `name` and `category`). Changes are PATCHed to Supabase for the
+  signed-in user and the month reloads. Split-adjusted income entries are marked as such.
 - **Add categories.** The **Categories** tab lists your expense and income names and can
   add a new one to `categories`. It immediately becomes available in cash-flow and SMS
   review pickers. `Other` exists in both lists as the fallback.
+- **Navigation and feedback.** The bottom bar keeps **Plan / SMS / Ready / Month / Ignored**
+  one tap away, with counts for pending, ready and ignored messages. The SMS screen has
+  search and **Load more**, the Scan button shows progress, and **Save selected** asks for
+  confirmation. Screen state, filters and scroll position survive rotation, and Back returns
+  to SMS review from any other screen.
 - **Session.** Email/password sign-in uses Supabase Auth; the access token, refresh token,
   user id and email are kept in `SharedPreferences` (`fp_companion_session`). Access tokens
   are refreshed automatically before a save. If no refresh token is available (for example
@@ -86,7 +94,7 @@ after installing. Because the session format now includes a refresh token, sign 
 
 ## Reviewing parser output
 
-Tap **Export CSV** to write every received message from the current month to
+Tap **More ▾ → Export CSV** to write every received message from the current month to
 `Android/data/com.finplannar.companion/files/finplannar-sms-review.csv` in app storage.
 The file contains the message date, sender, body, parsed amount, kind, merchant, category,
 account and whether the value came from a learned vendor rule. It stays on the device;

@@ -92,6 +92,7 @@ final class MonthEvent {
     boolean planned;
     double amount;
     String refId = "";         // budget id or actual event_key, used for editing
+    String occurrenceDate = ""; // original planned date, before any move
     String category = "Other";
     String source = "manual";
 

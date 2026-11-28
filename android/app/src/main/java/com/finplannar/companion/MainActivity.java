@@ -3,14 +3,18 @@ package com.finplannar.companion;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DatePickerDialog;
 import android.content.ContentResolver;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
+import android.content.res.TypedArray;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.View;
@@ -24,6 +28,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -50,6 +55,7 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -114,10 +120,19 @@ public final class MainActivity extends Activity {
     private CompanionDb db;
     private SupabaseApi api;
     private ExecutorService executor;
+    private ScrollView scrollView;
     private LinearLayout content;
     private LinearLayout bottomNav;
+    private Button scanButton;
+    private boolean scanning;
     private String selectedMonthDate = "";
     private String ignoredQuery = "";
+    private String smsQuery = "";
+    private int smsVisibleLimit = VISIBLE_CANDIDATE_LIMIT;
+    private String monthFilter = "all";
+    private final Map<String, Double> cashFlowOverrides = new HashMap<>();
+    private final List<String> recentPlanEntries = new ArrayList<>();
+    private long lastBackPress;
     private TextView statusView;
     private TextView summaryView;
     private Screen screen = Screen.SCAN;
@@ -167,15 +182,15 @@ public final class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(COLOR_BG);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
+        scrollView = new ScrollView(this);
+        scrollView.setFillViewport(true);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setBackgroundColor(COLOR_BG);
         content.setPadding(dp(16), dp(18), dp(16), dp(28));
-        scroll.addView(content, new ScrollView.LayoutParams(
+        scrollView.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(scroll, new LinearLayout.LayoutParams(
+        root.addView(scrollView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         View navDivider = new View(this);
@@ -192,9 +207,59 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(94)));
         setContentView(root);
 
+        if (savedInstanceState != null) {
+            String savedScreen = savedInstanceState.getString("screen");
+            if (savedScreen != null) {
+                try {
+                    screen = Screen.valueOf(savedScreen);
+                } catch (IllegalArgumentException ignored) {
+                    screen = Screen.SCAN;
+                }
+            }
+            String savedMonth = savedInstanceState.getString("month");
+            if (savedMonth != null) {
+                try {
+                    monthViewMonth = YearMonth.parse(savedMonth);
+                } catch (Exception ignored) {
+                    monthViewMonth = YearMonth.now();
+                }
+            }
+            selectedMonthDate = valueOr(savedInstanceState.getString("selectedDay"), "");
+            ignoredQuery = valueOr(savedInstanceState.getString("ignoredQuery"), "");
+            smsQuery = valueOr(savedInstanceState.getString("smsQuery"), "");
+            smsVisibleLimit = savedInstanceState.getInt("smsLimit", VISIBLE_CANDIDATE_LIMIT);
+            monthFilter = valueOr(savedInstanceState.getString("monthFilter"), "all");
+        }
+
         renderScreen();
         loadAccounts();
         loadCategories();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putString("screen", screen.name());
+        outState.putString("month", monthViewMonth.toString());
+        outState.putString("selectedDay", selectedMonthDate);
+        outState.putString("ignoredQuery", ignoredQuery);
+        outState.putString("smsQuery", smsQuery);
+        outState.putInt("smsLimit", smsVisibleLimit);
+        outState.putString("monthFilter", monthFilter);
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (screen == Screen.SCAN) {
+            if (SystemClock.elapsedRealtime() - lastBackPress < 2000) {
+                super.onBackPressed();
+                return;
+            }
+            lastBackPress = SystemClock.elapsedRealtime();
+            toast("Tap back again to exit");
+            return;
+        }
+        goTo(Screen.SCAN);
     }
 
     @Override
@@ -208,6 +273,7 @@ public final class MainActivity extends Activity {
     // ------------------------------------------------------------------- screens
 
     private void renderScreen() {
+        final int scrollY = scrollView == null ? 0 : scrollView.getScrollY();
         statusView = null;
         summaryView = null;
         content.removeAllViews();
@@ -241,6 +307,13 @@ public final class MainActivity extends Activity {
                 break;
         }
         renderBottomNav();
+        final int restoreY = scrollY;
+        scrollView.post(new Runnable() {
+            @Override
+            public void run() {
+                scrollView.scrollTo(0, restoreY);
+            }
+        });
     }
 
     private void renderAuthScreen() {
@@ -305,11 +378,11 @@ public final class MainActivity extends Activity {
 
     private void renderMainScreen() {
         content.addView(heading("SMS review"));
-        statusView = note(statusText());
+        statusView = note(scanning ? "Scanning current-month SMS…" : statusText());
         content.addView(statusView);
 
         LinearLayout actions = navRow();
-        View scan = button("Scan SMS", new View.OnClickListener() {
+        scanButton = button(scanning ? "Scanning…" : "Scan SMS", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 onScanClicked();
@@ -319,8 +392,9 @@ public final class MainActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         scanParams.topMargin = dp(12);
         scanParams.rightMargin = dp(5);
-        scan.setLayoutParams(scanParams);
-        actions.addView(scan);
+        scanButton.setLayoutParams(scanParams);
+        scanButton.setEnabled(!scanning);
+        actions.addView(scanButton);
 
         View save = button("Save selected", new View.OnClickListener() {
             @Override
@@ -343,48 +417,112 @@ public final class MainActivity extends Activity {
                 goTo(Screen.READY);
             }
         }));
-        tools.addView(choiceButton("Vendor rules", new View.OnClickListener() {
+        tools.addView(choiceButton("More ▾", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                showVendorRules();
-            }
-        }));
-        tools.addView(choiceButton("Export CSV", new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                onExportCsvClicked();
+                showSmsMenu(view);
             }
         }));
         content.addView(tools);
-        content.addView(choiceButton("Sign out", new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                api.signOut();
-                screen = Screen.SCAN;
-                renderScreen();
-                toast("Signed out");
-            }
-        }));
 
         final long monthStart = startOfCurrentMonthMillis();
         summaryView = note("");
         updateSummary(monthStart);
         content.addView(summaryView);
 
-        List<Candidate> pending = db.pendingCandidates(monthStart, VISIBLE_CANDIDATE_LIMIT);
-        int pendingCount = db.countPending(monthStart);
-        content.addView(sectionTitle("To review (" + pendingCount + ")"));
-        if (pending.isEmpty()) {
-            content.addView(note("No current-month messages need review. Tap Scan SMS to find more."));
-        } else {
-            for (Candidate candidate : pending) {
-                addCandidateCard(content, candidate);
+        EditText search = textField("Search sender or message", smsQuery);
+        search.setSingleLine(true);
+        search.setOnEditorActionListener(new OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView view, int actionId, android.view.KeyEvent event) {
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
+                    smsQuery = view.getText().toString();
+                    smsVisibleLimit = VISIBLE_CANDIDATE_LIMIT;
+                    scrollView.scrollTo(0, 0);
+                    renderScreen();
+                    return true;
+                }
+                return false;
             }
-            if (pendingCount > pending.size()) {
-                content.addView(note("Showing " + pending.size() + " of " + pendingCount
-                        + " messages awaiting review."));
-            }
+        });
+        content.addView(search);
+
+        List<Candidate> matching = filterCandidates(db.pendingCandidates(monthStart, 0), smsQuery);
+        int matchingCount = matching.size();
+        content.addView(sectionTitle("To review (" + matchingCount + ")"));
+        if (matching.isEmpty()) {
+            content.addView(note(smsQuery.trim().isEmpty()
+                    ? "No current-month messages need review. Tap Scan SMS to find more."
+                    : "No messages match this search."));
+            return;
         }
+        int visible = Math.min(smsVisibleLimit, matchingCount);
+        for (Candidate candidate : matching.subList(0, visible)) {
+            addCandidateCard(content, candidate);
+        }
+        if (matchingCount > visible) {
+            final int remaining = matchingCount - visible;
+            content.addView(button("Load more (" + remaining + ")", new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    smsVisibleLimit += VISIBLE_CANDIDATE_LIMIT;
+                    renderScreen();
+                }
+            }));
+        }
+    }
+
+    private void showSmsMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add("Vendor rules");
+        menu.getMenu().add("Export CSV");
+        menu.getMenu().add("Sign out");
+        menu.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
+            @Override
+            public boolean onMenuItemClick(android.view.MenuItem item) {
+                String title = String.valueOf(item.getTitle());
+                if ("Vendor rules".equals(title)) {
+                    showVendorRules();
+                } else if ("Export CSV".equals(title)) {
+                    onExportCsvClicked();
+                } else if ("Sign out".equals(title)) {
+                    confirmSignOut();
+                }
+                return true;
+            }
+        });
+        menu.show();
+    }
+
+    private void confirmSignOut() {
+        new AlertDialog.Builder(this)
+                .setTitle("Sign out?")
+                .setMessage("Confirmed messages that were not saved stay on this phone. "
+                        + "You can sign in again without losing them.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Sign out", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        api.signOut();
+                        screen = Screen.SCAN;
+                        scrollView.scrollTo(0, 0);
+                        renderScreen();
+                        toast("Signed out");
+                    }
+                })
+                .show();
+    }
+
+    private static List<Candidate> filterCandidates(List<Candidate> rows, String query) {
+        String needle = query == null ? "" : query.trim().toLowerCase(Locale.getDefault());
+        if (needle.isEmpty()) return rows;
+        List<Candidate> result = new ArrayList<>();
+        for (Candidate candidate : rows) {
+            String haystack = candidate.sender + " " + candidate.body + " " + candidate.name + " "
+                    + candidate.merchant + " " + candidate.category + " " + candidate.amount;
+            if (haystack.toLowerCase(Locale.getDefault()).contains(needle)) result.add(candidate);
+        }
+        return result;
     }
 
     private void renderMonthViewScreen() {
@@ -414,6 +552,27 @@ public final class MainActivity extends Activity {
             }
         }));
         content.addView(controls);
+
+        LinearLayout filters = navRow();
+        filters.addView(choiceButton("All", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setMonthFilter("all");
+            }
+        }));
+        filters.addView(choiceButton("Planned", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setMonthFilter("planned");
+            }
+        }));
+        filters.addView(choiceButton("Recorded", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setMonthFilter("recorded");
+            }
+        }));
+        content.addView(filters);
 
         LinearLayout plannedStats = navRow();
         plannedStats.addView(statCard("Planned income", "+" + money(monthPlannedIncome), COLOR_TEAL));
@@ -476,11 +635,23 @@ public final class MainActivity extends Activity {
         renderScreen();
     }
 
+    private void setMonthFilter(String filter) {
+        monthFilter = filter;
+        selectedMonthDate = "";
+        renderScreen();
+    }
+
+    private boolean matchesMonthFilter(MonthEvent event) {
+        if ("planned".equals(monthFilter)) return event.planned;
+        if ("recorded".equals(monthFilter)) return !event.planned;
+        return true;
+    }
+
     private List<MonthEvent> eventsOn(String date) {
         List<MonthEvent> result = new ArrayList<>();
         if (date == null || date.isEmpty()) return result;
         for (MonthEvent event : monthEvents) {
-            if (date.equals(event.date)) result.add(event);
+            if (date.equals(event.date) && matchesMonthFilter(event)) result.add(event);
         }
         return result;
     }
@@ -522,8 +693,8 @@ public final class MainActivity extends Activity {
             cell.setBackground(roundedBackground(
                     selected ? COLOR_SURFACE_3 : inMonth ? COLOR_SURFACE_2 : COLOR_BG,
                     selected ? COLOR_TEAL : COLOR_BORDER));
-            cell.setPadding(dp(5), dp(5), dp(5), dp(5));
-            cell.setMinimumHeight(dp(74));
+            cell.setPadding(dp(6), dp(6), dp(6), dp(6));
+            cell.setMinimumHeight(dp(88));
 
             TextView dayNumber = new TextView(this);
             dayNumber.setText(String.valueOf(date.getDayOfMonth()));
@@ -533,21 +704,21 @@ public final class MainActivity extends Activity {
                     : inMonth ? COLOR_TEXT : COLOR_MUTED);
             cell.addView(dayNumber);
 
-            for (int eventIndex = 0; eventIndex < Math.min(2, dayEvents.size()); eventIndex += 1) {
+            for (int eventIndex = 0; eventIndex < Math.min(3, dayEvents.size()); eventIndex += 1) {
                 MonthEvent event = dayEvents.get(eventIndex);
                 TextView chip = new TextView(this);
-                String shortTitle = event.title.length() > 11
-                        ? event.title.substring(0, 10) + "…" : event.title;
+                String shortTitle = event.title.length() > 15
+                        ? event.title.substring(0, 14) + "…" : event.title;
                 chip.setText(("income".equals(event.kind) ? "↑ " : "↓ ") + shortTitle);
-                chip.setTextSize(9.5f);
+                chip.setTextSize(11f);
                 chip.setTextColor("income".equals(event.kind) ? COLOR_TEAL
                         : event.planned ? COLOR_AMBER : COLOR_RED);
                 cell.addView(chip);
             }
-            if (dayEvents.size() > 2) {
+            if (dayEvents.size() > 3) {
                 TextView more = new TextView(this);
-                more.setText("+" + (dayEvents.size() - 2) + " more");
-                more.setTextSize(9f);
+                more.setText("+" + (dayEvents.size() - 3) + " more");
+                more.setTextSize(10f);
                 more.setTextColor(COLOR_MUTED);
                 cell.addView(more);
             }
@@ -563,7 +734,7 @@ public final class MainActivity extends Activity {
             GridLayout.LayoutParams params = new GridLayout.LayoutParams(
                     GridLayout.spec(1 + index / 7), GridLayout.spec(index % 7, 1f));
             params.width = 0;
-            params.height = dp(78);
+            params.height = dp(94);
             params.setMargins(dp(2), dp(2), dp(2), dp(2));
             grid.addView(cell, params);
         }
@@ -572,6 +743,7 @@ public final class MainActivity extends Activity {
 
     private void showMonthEventEditor(final MonthEvent event) {
         final boolean planned = event.planned;
+        final AlertDialog[] holder = new AlertDialog[1];
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
 
@@ -587,7 +759,15 @@ public final class MainActivity extends Activity {
         final Spinner category = stringSpinner(names.toArray(new String[0]), event.category);
         form.addView(category);
 
-        final AlertDialog[] holder = new AlertDialog[1];
+        if (planned && !event.occurrenceDate.isEmpty()) {
+            form.addView(button("Move planned date", new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    showMoveDatePicker(event, holder[0]);
+                }
+            }));
+        }
+
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(planned ? "Edit planned spend" : "Edit recorded spend")
                 .setView(form)
@@ -654,6 +834,47 @@ public final class MainActivity extends Activity {
             }
         });
         dialog.show();
+    }
+
+    private void showMoveDatePicker(final MonthEvent event, final AlertDialog editor) {
+        LocalDate current = LocalDate.parse(event.date);
+        DatePickerDialog picker = new DatePickerDialog(this,
+                new DatePickerDialog.OnDateSetListener() {
+                    @Override
+                    public void onDateSet(android.widget.DatePicker view, int year,
+                                          int month, int dayOfMonth) {
+                        final String target = String.format(Locale.US, "%04d-%02d-%02d",
+                                year, month + 1, dayOfMonth);
+                        if (target.equals(event.date)) return;
+                        executor.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    api.upsertBudgetMove(api.getUserId(), event.refId,
+                                            event.occurrenceDate, target);
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (editor != null && editor.isShowing()) editor.dismiss();
+                                            toast("Planned date moved");
+                                            loadMonthView();
+                                            renderScreen();
+                                        }
+                                    });
+                                } catch (final Exception error) {
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            toast("Could not move planned date: " + message(error));
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+                }, current.getYear(), current.getMonthValue() - 1, current.getDayOfMonth());
+        picker.setTitle("Move " + event.title);
+        picker.show();
     }
 
     private void renderIgnoredScreen() {
@@ -757,20 +978,30 @@ public final class MainActivity extends Activity {
 
     private void renderBottomNav() {
         bottomNav.removeAllViews();
-        addTab("⌂", "Plan", Screen.DASHBOARD);
-        addTab("✉", "SMS", Screen.SCAN);
-        addTab("✓", "Ready", Screen.READY);
-        addTab("▦", "Month", Screen.MONTH_VIEW);
-        addTab("⊘", "Ignored", Screen.IGNORED);
+        long monthStart = startOfCurrentMonthMillis();
+        int pending = db.countPending(monthStart);
+        int ready = db.countReadyToSave(monthStart);
+        int ignored = db.countIgnored();
+        addTab("⌂", "Plan", Screen.DASHBOARD, "");
+        addTab("✉", "SMS", Screen.SCAN, pending > 0 ? String.valueOf(pending) : "");
+        addTab("✓", "Ready", Screen.READY, ready > 0 ? String.valueOf(ready) : "");
+        addTab("▦", "Month", Screen.MONTH_VIEW, "");
+        addTab("⊘", "Ignored", Screen.IGNORED, ignored > 0 ? String.valueOf(ignored) : "");
     }
 
-    private void addTab(String icon, String label, final Screen target) {
+    private void addTab(String icon, String label, Screen target) {
+        addTab(icon, label, target, "");
+    }
+
+    private void addTab(String icon, String label, final Screen target, String count) {
         boolean active = screen == target
                 || (target == Screen.DASHBOARD && (screen == Screen.CASH_FLOWS || screen == Screen.CATEGORIES));
         LinearLayout tab = new LinearLayout(this);
         tab.setOrientation(LinearLayout.VERTICAL);
         tab.setGravity(android.view.Gravity.CENTER);
         tab.setBackgroundColor(active ? COLOR_SURFACE_3 : COLOR_SURFACE);
+        tab.setContentDescription(label);
+        applyPressFeedback(tab);
         tab.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
@@ -785,6 +1016,19 @@ public final class MainActivity extends Activity {
         labelView.setTextSize(11f);
         labelView.setTextColor(active ? COLOR_TEXT : COLOR_MUTED);
         tab.addView(labelView);
+
+        if (!count.isEmpty()) {
+            TextView badgeView = new TextView(this);
+            badgeView.setText(count);
+            badgeView.setTextSize(10f);
+            badgeView.setTypeface(Typeface.DEFAULT_BOLD);
+            badgeView.setTextColor(COLOR_DARK_TEXT);
+            badgeView.setBackground(roundedBackground(
+                    target == Screen.READY ? COLOR_TEAL : COLOR_AMBER,
+                    target == Screen.READY ? COLOR_TEAL : COLOR_AMBER));
+            badgeView.setPadding(dp(6), dp(1), dp(6), dp(1));
+            tab.addView(badgeView);
+        }
 
         tab.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -804,7 +1048,11 @@ public final class MainActivity extends Activity {
             dashboardStatus = "Loading dashboard…";
             loadDashboard();
         }
+        if (target == Screen.CASH_FLOWS) {
+            loadCashFlows();
+        }
         screen = target;
+        scrollView.scrollTo(0, 0);
         renderScreen();
     }
 
@@ -856,14 +1104,13 @@ public final class MainActivity extends Activity {
         }
 
         content.addView(note("Recent planned entries"));
-        int shown = 0;
-        for (CashFlowRow row : cashFlowRows) {
-            if (shown >= 5) break;
-            content.addView(note(row.name + " • " + row.kind + " • "
-                    + money(row.amount) + " • " + row.startDate));
-            shown += 1;
+        if (recentPlanEntries.isEmpty()) {
+            content.addView(note("No planned entries yet. Add one in Cash flows."));
+        } else {
+            for (String entry : recentPlanEntries) {
+                content.addView(note(entry));
+            }
         }
-        if (shown == 0) content.addView(note("No planned entries yet. Add one in Cash flows."));
 
         content.addView(button("Refresh dashboard", new View.OnClickListener() {
             @Override
@@ -883,13 +1130,17 @@ public final class MainActivity extends Activity {
                 try {
                     final String userId = api.getUserId();
                     YearMonth month = YearMonth.now();
+                    String monthKey = month.toString();
                     String from = month.atDay(1).toString();
                     String to = month.atEndOfMonth().toString();
 
                     JSONArray profileRows = api.fetchProfile(userId);
                     JSONArray accountRows = api.fetchAccounts(userId);
                     JSONArray flowRows = api.fetchCashFlows(userId);
+                    JSONArray incomeRows = api.fetchMonthlyIncomes(userId, monthKey);
                     JSONArray actualRows = api.fetchActuals(userId, from, to);
+                    final Map<String, Double> loadedOverrides =
+                            overridesFrom(api.fetchCashFlowOverrides(userId));
 
                     final String currency = profileRows.length() > 0
                             ? valueOr(profileRows.getJSONObject(0).optString("currency", ""), "INR")
@@ -909,14 +1160,37 @@ public final class MainActivity extends Activity {
                     final List<CashFlowRow> loadedFlows = cashFlowRowsFrom(flowRows);
                     final double[] plannedIncome = {0};
                     final double[] plannedExpense = {0};
+                    final List<String> recent = new ArrayList<String>();
                     for (CashFlowRow flow : loadedFlows) {
-                        if (!occursInMonth(flow, month)) continue;
-                        if ("income".equals(flow.kind)) {
-                            plannedIncome[0] += flow.amount;
-                        } else {
-                            plannedExpense[0] += flow.amount;
+                        String flowMonth = flow.startDate != null && flow.startDate.length() >= 7
+                                ? flow.startDate.substring(0, 7) : monthKey;
+                        String effectiveMonth = occursInMonth(flow, month) ? monthKey : flowMonth;
+                        double shownAmount = cashFlowAmountFor(flow, effectiveMonth, loadedOverrides);
+                        boolean fixed = loadedOverrides.containsKey(
+                                cashFlowOverrideKey(flow.id, effectiveMonth));
+                        if (occursInMonth(flow, month)) {
+                            if ("income".equals(flow.kind)) {
+                                plannedIncome[0] += shownAmount;
+                            } else {
+                                plannedExpense[0] += shownAmount;
+                            }
+                        }
+                        if (recent.size() < 5) {
+                            recent.add(flow.name + " • " + flow.kind + " • " + money(shownAmount)
+                                    + " • " + flow.startDate
+                                    + (fixed ? " • fixed for " + effectiveMonth : ""));
                         }
                     }
+                    for (int index = 0; index < incomeRows.length(); index += 1) {
+                        JSONObject row = incomeRows.getJSONObject(index);
+                        double amount = Math.abs(row.optDouble("amount", 0));
+                        plannedIncome[0] += amount;
+                        if (recent.size() < 5) {
+                            recent.add(valueOr(row.optString("note", ""), "Monthly income")
+                                    + " • income • " + money(amount) + " • " + from);
+                        }
+                    }
+                    final List<String> finalRecent = recent;
 
                     final double[] actualIncome = {0};
                     final double[] actualExpense = {0};
@@ -940,6 +1214,10 @@ public final class MainActivity extends Activity {
                             }
                             cashFlowRows.clear();
                             cashFlowRows.addAll(loadedFlows);
+                            cashFlowOverrides.clear();
+                            cashFlowOverrides.putAll(loadedOverrides);
+                            recentPlanEntries.clear();
+                            recentPlanEntries.addAll(finalRecent);
                             dashboardCurrency = currency;
                             dashboardOpeningTotal = openingTotal[0];
                             dashboardPlannedIncome = plannedIncome[0];
@@ -977,10 +1255,13 @@ public final class MainActivity extends Activity {
                     String userId = api.getUserId();
                     String from = month.atDay(1).toString();
                     String to = month.atEndOfMonth().toString();
+                    String monthKey = month.toString();
                     JSONArray budgetRows = api.fetchBudgets(userId);
-                    JSONArray incomeRows = api.fetchMonthlyIncomes(userId, month.toString());
+                    JSONArray incomeRows = api.fetchMonthlyIncomes(userId, monthKey);
                     JSONArray flowRows = api.fetchCashFlows(userId);
                     JSONArray actualRows = api.fetchActuals(userId, from, to);
+                    final Map<String, Double> loadedOverrides =
+                            overridesFrom(api.fetchCashFlowOverrides(userId));
                     JSONArray moveRows;
                     try {
                         moveRows = api.fetchBudgetMoves(userId);
@@ -1025,6 +1306,7 @@ public final class MainActivity extends Activity {
                                 MonthEvent event = new MonthEvent(effective, title, detail,
                                         "expense", true, amount);
                                 event.refId = id;
+                                event.occurrenceDate = occurrence;
                                 event.category = category;
                                 event.source = "budget";
                                 events.put(key, event);
@@ -1048,9 +1330,13 @@ public final class MainActivity extends Activity {
                         if (!"income".equals(flow.kind) || !occursInMonth(flow, month)) continue;
                         String date = cashFlowDateInMonth(flow, month);
                         if (date == null) continue;
+                        double effectiveAmount = cashFlowAmountFor(flow, monthKey, loadedOverrides);
+                        boolean fixed = loadedOverrides.containsKey(
+                                cashFlowOverrideKey(flow.id, monthKey));
                         events.put("flow-" + flow.id + "-" + date, new MonthEvent(date,
-                                flow.name, valueOr(flow.category, "Other") + " · Planned",
-                                "income", true, flow.amount));
+                                flow.name, valueOr(flow.category, "Other") + " · Planned"
+                                        + (fixed ? " · split-adjusted" : ""),
+                                "income", true, effectiveAmount));
                     }
 
                     for (int index = 0; index < actualRows.length(); index += 1) {
@@ -1102,6 +1388,8 @@ public final class MainActivity extends Activity {
                         @Override
                         public void run() {
                             if (screen != Screen.MONTH_VIEW || !month.equals(monthViewMonth)) return;
+                            cashFlowOverrides.clear();
+                            cashFlowOverrides.putAll(loadedOverrides);
                             monthEvents.clear();
                             monthEvents.addAll(finalEvents);
                             monthPlannedIncome = finalPlannedIncome;
@@ -1178,12 +1466,20 @@ public final class MainActivity extends Activity {
         content.addView(heading("Cash flows"));
         addPlanSubNav();
         content.addView(note("Edit planned entries here. SMS imports keep their source tag."));
-        content.addView(button("Add cash flow", new View.OnClickListener() {
+        LinearLayout headerActions = navRow();
+        headerActions.addView(choiceButton("Add cash flow", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 showCashFlowDialog(null);
             }
         }));
+        headerActions.addView(choiceButton("Refresh", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                loadCashFlows();
+            }
+        }));
+        content.addView(headerActions);
 
         if (cashFlowRows.isEmpty()) {
             content.addView(note("No cash-flow entries yet. Add one to include it in your plan."));
@@ -1200,6 +1496,18 @@ public final class MainActivity extends Activity {
                     + flow.category + " • " + accountLabel(flow.account)));
             card.addView(note("Schedule: " + flow.recurrence + " • from " + flow.startDate
                     + ("sms".equals(flow.source) ? " • SMS import" : "")));
+            List<String> fixedMonths = new ArrayList<String>();
+            for (Map.Entry<String, Double> entry : cashFlowOverrides.entrySet()) {
+                if (entry.getKey().startsWith(flow.id + "|")) {
+                    fixedMonths.add(entry.getKey().substring(flow.id.length() + 1)
+                            + ": " + money(entry.getValue()));
+                }
+            }
+            if (!fixedMonths.isEmpty()) {
+                Collections.sort(fixedMonths);
+                card.addView(note("Split-adjusted months: "
+                        + android.text.TextUtils.join(", ", fixedMonths)));
+            }
             LinearLayout actions = navRow();
             actions.addView(choiceButton("Edit", new View.OnClickListener() {
                 @Override
@@ -1224,14 +1532,18 @@ public final class MainActivity extends Activity {
             @Override
             public void run() {
                 try {
-                    final List<CashFlowRow> loaded = cashFlowRowsFrom(
-                            api.fetchCashFlows(api.getUserId()));
+                    final String userId = api.getUserId();
+                    final List<CashFlowRow> loaded = cashFlowRowsFrom(api.fetchCashFlows(userId));
+                    final Map<String, Double> loadedOverrides =
+                            overridesFrom(api.fetchCashFlowOverrides(userId));
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
                             if (screen != Screen.CASH_FLOWS) return;
                             cashFlowRows.clear();
                             cashFlowRows.addAll(loaded);
+                            cashFlowOverrides.clear();
+                            cashFlowOverrides.putAll(loadedOverrides);
                             renderScreen();
                         }
                     });
@@ -1850,10 +2162,12 @@ public final class MainActivity extends Activity {
     }
 
     private void runScan() {
+        if (scanning) return;
         final long monthStart = startOfCurrentMonthMillis();
         final long lastId = db.getLastScanId();
         final ContentResolver resolver = getContentResolver();
-        setStatus("Scanning current-month SMS…");
+        scanning = true;
+        renderScreen();
         executor.execute(new Runnable() {
             @Override
             public void run() {
@@ -1893,14 +2207,18 @@ public final class MainActivity extends Activity {
                             if (hasMore) {
                                 result += " — tap Scan again for the next batch";
                             }
-                            toast(result);
+                            scanning = false;
                             renderScreen();
+                            setStatus(result);
+                            toast(result);
                         }
                     });
                 } catch (final Exception error) {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            scanning = false;
+                            renderScreen();
                             setStatus("Scan failed: " + message(error));
                             toast("Scan failed: " + message(error));
                         }
@@ -1911,6 +2229,31 @@ public final class MainActivity extends Activity {
     }
 
     private void onSaveSelectedClicked() {
+        final String userId = api.getUserId();
+        if (userId.isEmpty()) {
+            toast("Please sign in again");
+            return;
+        }
+        final int count = db.reviewedCandidates(startOfCurrentMonthMillis()).size();
+        if (count == 0) {
+            toast("Nothing is queued for Save selected yet");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Save selected")
+                .setMessage("Send " + count + " confirmed messages to Supabase? "
+                        + "Rows you ignored are only marked saved on this phone.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save " + count, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        performSaveSelected();
+                    }
+                })
+                .show();
+    }
+
+    private void performSaveSelected() {
         final String userId = api.getUserId();
         if (userId.isEmpty()) {
             toast("Please sign in again");
@@ -2174,6 +2517,14 @@ public final class MainActivity extends Activity {
         params.leftMargin = dp(5);
         view.setLayoutParams(params);
         return view;
+    }
+
+    private void applyPressFeedback(View view) {
+        int[] attributes = {android.R.attr.selectableItemBackground};
+        TypedArray styled = obtainStyledAttributes(attributes);
+        Drawable foreground = styled.getDrawable(0);
+        styled.recycle();
+        view.setForeground(foreground);
     }
 
     private GradientDrawable roundedBackground(int fill, int stroke) {
@@ -2494,6 +2845,29 @@ public final class MainActivity extends Activity {
                 .format(new Date(last));
         return "Signed in as " + api.getEmail() + "\nLast scan: " + when
                 + "\nScans are limited to the current month.";
+    }
+
+    private static String cashFlowOverrideKey(String flowId, String month) {
+        return flowId + "|" + month;
+    }
+
+    /** Calendar splits store a fixed amount for one month; honor it everywhere. */
+    private static double cashFlowAmountFor(CashFlowRow flow, String month,
+                                            Map<String, Double> overrides) {
+        Double fixed = overrides.get(cashFlowOverrideKey(flow.id, month));
+        return fixed == null ? flow.amount : fixed;
+    }
+
+    private static Map<String, Double> overridesFrom(JSONArray rows) throws JSONException {
+        Map<String, Double> result = new HashMap<>();
+        for (int index = 0; index < rows.length(); index += 1) {
+            JSONObject row = rows.getJSONObject(index);
+            String flowId = row.optString("cash_flow_id", "");
+            String month = row.optString("month", "");
+            if (flowId.isEmpty() || month.isEmpty()) continue;
+            result.put(cashFlowOverrideKey(flowId, month), row.optDouble("amount", 0));
+        }
+        return result;
     }
 
     private static long startOfCurrentMonthMillis() {

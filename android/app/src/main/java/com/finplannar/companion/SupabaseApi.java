@@ -192,6 +192,14 @@ final class SupabaseApi {
         return new JSONArray(response);
     }
 
+    /** Fixed amounts for individual cash-flow months, created by calendar splits. */
+    JSONArray fetchCashFlowOverrides(String userId) throws IOException, JSONException {
+        String path = "/rest/v1/cash_flow_overrides?select=cash_flow_id,month,amount&user_id=eq."
+                + URLEncoder.encode(userId, "UTF-8");
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
     /** Planned spends (budgets) for the companion's month view. */
     JSONArray fetchBudgets(String userId) throws IOException, JSONException {
         String path = "/rest/v1/budgets?select=id,name,category,monthly_limit,period,start_date,rollover"
@@ -234,6 +242,18 @@ final class SupabaseApi {
         String path = "/rest/v1/budgets?id=eq." + URLEncoder.encode(budgetId, "UTF-8")
                 + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8");
         execute("PATCH", path, patch, true, "return=minimal");
+    }
+
+    /** Move one planned occurrence without changing the other occurrences. */
+    void upsertBudgetMove(String userId, String budgetId, String fromDate, String toDate)
+            throws IOException, JSONException {
+        JSONObject payload = new JSONObject();
+        payload.put("user_id", userId);
+        payload.put("budget_id", budgetId);
+        payload.put("from_date", fromDate);
+        payload.put("to_date", toDate);
+        execute("POST", "/rest/v1/budget_moves?on_conflict=user_id,budget_id,from_date",
+                payload, true, "resolution=merge-duplicates,return=minimal");
     }
 
     /** Change the category (or name/amount) of a recorded spend from the month view. */
