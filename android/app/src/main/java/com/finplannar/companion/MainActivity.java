@@ -8,10 +8,12 @@ import android.content.DialogInterface;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.View;
+import android.view.Window;
 import android.widget.AdapterView;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
@@ -38,11 +40,16 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -54,6 +61,17 @@ public final class MainActivity extends Activity {
     private static final int SCAN_BATCH_LIMIT = 50;
     private static final int CSV_BATCH_LIMIT = 100;
     private static final int VISIBLE_CANDIDATE_LIMIT = 20;
+
+    // Same palette as the web app's styles.css, kept in Java because this UI is code-only.
+    private static final int COLOR_BG = Color.parseColor("#070F16");
+    private static final int COLOR_SURFACE = Color.parseColor("#142330");
+    private static final int COLOR_SURFACE_2 = Color.parseColor("#182A38");
+    private static final int COLOR_TEXT = Color.parseColor("#E7F0F5");
+    private static final int COLOR_MUTED = Color.parseColor("#8CA0AE");
+    private static final int COLOR_TEAL = Color.parseColor("#2DD4A7");
+    private static final int COLOR_RED = Color.parseColor("#FF6B6B");
+    private static final int COLOR_AMBER = Color.parseColor("#FFBF69");
+    private static final int COLOR_DARK_TEXT = Color.parseColor("#041A14");
 
     private static final String[] DEFAULT_EXPENSE_CATEGORIES = {
             "Housing", "Utilities", "Groceries", "Transport", "Insurance", "Health", "Education",
@@ -69,7 +87,7 @@ public final class MainActivity extends Activity {
             "monthly", "one_time", "yearly", "every_n_months", "every_n_years"
     };
 
-    private enum Screen { SCAN, DASHBOARD, CASH_FLOWS, CATEGORIES }
+    private enum Screen { SCAN, DASHBOARD, CASH_FLOWS, CATEGORIES, MONTH_VIEW, IGNORED }
 
     private static final class AccountOption {
         final String id;
@@ -106,10 +124,22 @@ public final class MainActivity extends Activity {
     private double dashboardPlannedExpense;
     private double dashboardActualIncome;
     private double dashboardActualExpense;
+    private YearMonth monthViewMonth = YearMonth.now();
+    private String monthViewStatus = "Loading month…";
+    private final List<MonthEvent> monthEvents = new ArrayList<>();
+    private double monthPlannedIncome;
+    private double monthPlannedExpense;
+    private double monthRecordedIncome;
+    private double monthRecordedExpense;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            Window window = getWindow();
+            window.setStatusBarColor(COLOR_BG);
+            window.setNavigationBarColor(COLOR_BG);
+        }
         db = new CompanionDb(this);
         api = new SupabaseApi(this);
         executor = Executors.newSingleThreadExecutor();
@@ -128,7 +158,7 @@ public final class MainActivity extends Activity {
         scroll.setFillViewport(true);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setBackgroundColor(Color.WHITE);
+        content.setBackgroundColor(COLOR_BG);
         content.setPadding(dp(20), dp(24), dp(20), dp(32));
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -166,6 +196,12 @@ public final class MainActivity extends Activity {
                 break;
             case CATEGORIES:
                 renderCategoriesScreen();
+                break;
+            case MONTH_VIEW:
+                renderMonthViewScreen();
+                break;
+            case IGNORED:
+                renderIgnoredScreen();
                 break;
             default:
                 renderMainScreen();
@@ -299,6 +335,131 @@ public final class MainActivity extends Activity {
         content.addView(candidates);
     }
 
+    private void renderMonthViewScreen() {
+        content.addView(heading("Month view"));
+        renderNav();
+
+        String label = monthViewMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()));
+        LinearLayout controls = navRow();
+        controls.addView(choiceButton("Previous", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                monthViewMonth = monthViewMonth.minusMonths(1);
+                loadMonthView();
+                renderScreen();
+            }
+        }));
+        controls.addView(choiceButton("This month", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                monthViewMonth = YearMonth.now();
+                loadMonthView();
+                renderScreen();
+            }
+        }));
+        controls.addView(choiceButton("Next", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                monthViewMonth = monthViewMonth.plusMonths(1);
+                loadMonthView();
+                renderScreen();
+            }
+        }));
+        content.addView(controls);
+        content.addView(note(label));
+        content.addView(note(monthViewStatus));
+        content.addView(note("Planned: +" + money(monthPlannedIncome) + " income / -"
+                + money(monthPlannedExpense) + " expenses"));
+        content.addView(note("Recorded: +" + money(monthRecordedIncome) + " income / -"
+                + money(monthRecordedExpense) + " expenses"));
+
+        if (monthEvents.isEmpty()) {
+            content.addView(note("No planned or recorded entries for this month yet."));
+        } else {
+            String currentDate = "";
+            LinearLayout group = null;
+            for (MonthEvent event : monthEvents) {
+                if (!event.date.equals(currentDate)) {
+                    currentDate = event.date;
+                    group = new LinearLayout(this);
+                    group.setOrientation(LinearLayout.VERTICAL);
+                    group.setBackgroundColor(COLOR_SURFACE);
+                    group.setPadding(dp(12), dp(12), dp(12), dp(12));
+                    LinearLayout.LayoutParams groupParams = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    groupParams.topMargin = dp(12);
+                    group.setLayoutParams(groupParams);
+                    TextView dateHeader = new TextView(this);
+                    dateHeader.setText(longDateOf(event.date));
+                    dateHeader.setTextColor(COLOR_TEXT);
+                    dateHeader.setTextSize(15f);
+                    dateHeader.setTypeface(Typeface.DEFAULT_BOLD);
+                    group.addView(dateHeader);
+                    content.addView(group);
+                }
+                TextView row = new TextView(this);
+                String marker = "income".equals(event.kind) ? "↑ " : "↓ ";
+                row.setText(marker + event.title + "  •  " + event.detail + "\n"
+                        + (event.kind.equals("income") ? "+" : "-") + money(event.amount));
+                row.setTextSize(14f);
+                row.setTextColor("income".equals(event.kind) ? COLOR_TEAL
+                        : event.planned ? COLOR_AMBER : COLOR_RED);
+                row.setPadding(0, dp(7), 0, dp(7));
+                if (group != null) group.addView(row);
+            }
+        }
+
+        content.addView(button("Refresh month", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                loadMonthView();
+                renderScreen();
+            }
+        }));
+    }
+
+    private void renderIgnoredScreen() {
+        content.addView(heading("Ignored SMS"));
+        renderNav();
+        content.addView(note("These messages were dismissed by the on-device parser. Nothing from them "
+                + "was sent to Supabase. Un-ignore returns a message to SMS review so you can "
+                + "confirm or edit it."));
+
+        List<Candidate> ignored = db.ignoredCandidates(100);
+        if (ignored.isEmpty()) {
+            content.addView(note("No ignored messages yet."));
+            return;
+        }
+        for (final Candidate candidate : ignored) {
+            LinearLayout card = card();
+            TextView header = new TextView(this);
+            header.setText(candidate.sender + "  •  "
+                    + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                    .format(new Date(candidate.smsDate)));
+            header.setTextColor(COLOR_TEXT);
+            header.setTextSize(15f);
+            header.setTypeface(Typeface.DEFAULT_BOLD);
+            card.addView(header);
+
+            String snippet = candidate.body.replaceAll("\\s+", " ").trim();
+            if (snippet.length() > 180) snippet = snippet.substring(0, 180) + "…";
+            card.addView(note(snippet));
+            card.addView(note("Amount " + (candidate.amount > 0 ? money(candidate.amount) : "not set")
+                    + "  •  " + candidate.kind + "  •  " + candidate.category
+                    + (candidate.synced ? "  •  synced as ignored" : "")));
+            card.addView(button("Un-ignore", new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    db.unignoreCandidate(candidate.fingerprint);
+                    toast("Message returned to SMS review");
+                    updateSummary(startOfCurrentMonthMillis());
+                    renderScreen();
+                }
+            }));
+            content.addView(card);
+        }
+    }
+
     // ------------------------------------------------------------ nav + dashboard
 
     private void renderNav() {
@@ -338,6 +499,24 @@ public final class MainActivity extends Activity {
             }
         }));
         content.addView(second);
+
+        LinearLayout third = navRow();
+        third.addView(choiceButton("Month view", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                screen = Screen.MONTH_VIEW;
+                loadMonthView();
+                renderScreen();
+            }
+        }));
+        third.addView(choiceButton("Ignored SMS", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                screen = Screen.IGNORED;
+                renderScreen();
+            }
+        }));
+        content.addView(third);
     }
 
     private void renderDashboardScreen() {
@@ -471,6 +650,205 @@ public final class MainActivity extends Activity {
                 }
             }
         });
+    }
+
+    // ---------------------------------------------------------------- month view
+
+    private void loadMonthView() {
+        if (!api.isSignedIn()) return;
+        final YearMonth month = monthViewMonth;
+        monthViewStatus = "Loading month…";
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String userId = api.getUserId();
+                    String from = month.atDay(1).toString();
+                    String to = month.atEndOfMonth().toString();
+                    JSONArray budgetRows = api.fetchBudgets(userId);
+                    JSONArray incomeRows = api.fetchMonthlyIncomes(userId, month.toString());
+                    JSONArray flowRows = api.fetchCashFlows(userId);
+                    JSONArray actualRows = api.fetchActuals(userId, from, to);
+                    JSONArray moveRows;
+                    try {
+                        moveRows = api.fetchBudgetMoves(userId);
+                    } catch (Exception missingTable) {
+                        moveRows = new JSONArray();
+                    }
+
+                    Map<String, String> moves = new LinkedHashMap<>();
+                    for (int index = 0; index < moveRows.length(); index += 1) {
+                        JSONObject move = moveRows.getJSONObject(index);
+                        moves.put(move.optString("budget_id", "") + "|"
+                                + move.optString("from_date", ""), move.optString("to_date", ""));
+                    }
+
+                    Map<String, MonthEvent> events = new LinkedHashMap<>();
+                    double plannedIncome = 0;
+                    double plannedExpense = 0;
+                    double recordedIncome = 0;
+                    double recordedExpense = 0;
+
+                    for (int index = 0; index < budgetRows.length(); index += 1) {
+                        JSONObject row = budgetRows.getJSONObject(index);
+                        String id = row.optString("id", "");
+                        if (id.isEmpty()) continue;
+                        String title = valueOr(row.optString("name", ""),
+                                valueOr(row.optString("category", ""), "Planned spend"));
+                        String category = valueOr(row.optString("category", ""), "Other");
+                        double amount = Math.abs(row.optDouble("monthly_limit", 0));
+                        String period = valueOr(row.optString("period", ""), "monthly");
+                        String startDate = row.optString("start_date", "");
+                        for (int offset = -1; offset <= 1; offset += 1) {
+                            YearMonth occurrenceMonth = month.plusMonths(offset);
+                            String occurrence = budgetOccurrenceDate(period, startDate, occurrenceMonth);
+                            if (occurrence == null) continue;
+                            String target = moves.get(id + "|" + occurrence);
+                            String effective = target == null || target.isEmpty() ? occurrence : target;
+                            if (!effective.startsWith(month.toString())) continue;
+                            String detail = category + " · Planned"
+                                    + (target == null ? "" : " · moved from " + longDateOf(occurrence));
+                            String key = "budget-" + id + "-" + occurrence;
+                            if (!events.containsKey(key)) {
+                                events.put(key, new MonthEvent(effective, title, detail,
+                                        "expense", true, amount));
+                            }
+                        }
+                    }
+
+                    for (int index = 0; index < incomeRows.length(); index += 1) {
+                        JSONObject row = incomeRows.getJSONObject(index);
+                        int day = row.optInt("day", 1);
+                        day = Math.max(1, Math.min(month.lengthOfMonth(), day));
+                        String date = month.atDay(day).toString();
+                        double amount = Math.abs(row.optDouble("amount", 0));
+                        String note = valueOr(row.optString("note", ""), "Monthly income");
+                        events.put("income-" + month.toString(), new MonthEvent(date, "Monthly income",
+                                note, "income", true, amount));
+                    }
+
+                    List<CashFlowRow> flows = cashFlowRowsFrom(flowRows);
+                    for (CashFlowRow flow : flows) {
+                        if (!"income".equals(flow.kind) || !occursInMonth(flow, month)) continue;
+                        String date = cashFlowDateInMonth(flow, month);
+                        if (date == null) continue;
+                        events.put("flow-" + flow.id + "-" + date, new MonthEvent(date,
+                                flow.name, valueOr(flow.category, "Other") + " · Planned",
+                                "income", true, flow.amount));
+                    }
+
+                    for (int index = 0; index < actualRows.length(); index += 1) {
+                        JSONObject row = actualRows.getJSONObject(index);
+                        String date = row.optString("date", "");
+                        if (!date.startsWith(month.toString())) continue;
+                        String kind = "income".equals(row.optString("kind", "")) ? "income" : "expense";
+                        double amount = Math.abs(row.optDouble("amount", 0));
+                        String title = valueOr(row.optString("name", ""),
+                                valueOr(row.optString("category", ""), "Recorded"));
+                        String detail = valueOr(row.optString("category", ""), "Other") + " · Recorded"
+                                + ("sms".equals(row.optString("source", "")) ? " · SMS" : "");
+                        events.put("actual-" + row.optString("event_key", String.valueOf(index)),
+                                new MonthEvent(date, title, detail, kind, false, amount));
+                    }
+
+                    List<MonthEvent> sorted = new ArrayList<>(events.values());
+                    Collections.sort(sorted, new Comparator<MonthEvent>() {
+                        @Override
+                        public int compare(MonthEvent left, MonthEvent right) {
+                            int byDate = left.date.compareTo(right.date);
+                            if (byDate != 0) return byDate;
+                            if (left.planned != right.planned) return left.planned ? -1 : 1;
+                            return left.title.compareTo(right.title);
+                        }
+                    });
+
+                    for (MonthEvent event : sorted) {
+                        if ("income".equals(event.kind)) {
+                            if (event.planned) plannedIncome += event.amount;
+                            else recordedIncome += event.amount;
+                        } else {
+                            if (event.planned) plannedExpense += event.amount;
+                            else recordedExpense += event.amount;
+                        }
+                    }
+
+                    final List<MonthEvent> finalEvents = sorted;
+                    final double finalPlannedIncome = plannedIncome;
+                    final double finalPlannedExpense = plannedExpense;
+                    final double finalRecordedIncome = recordedIncome;
+                    final double finalRecordedExpense = recordedExpense;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen != Screen.MONTH_VIEW || !month.equals(monthViewMonth)) return;
+                            monthEvents.clear();
+                            monthEvents.addAll(finalEvents);
+                            monthPlannedIncome = finalPlannedIncome;
+                            monthPlannedExpense = finalPlannedExpense;
+                            monthRecordedIncome = finalRecordedIncome;
+                            monthRecordedExpense = finalRecordedExpense;
+                            monthViewStatus = "Updated " + dateTimeOf(System.currentTimeMillis());
+                            renderScreen();
+                        }
+                    });
+                } catch (final Exception error) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen != Screen.MONTH_VIEW) return;
+                            monthViewStatus = "Month view failed: " + message(error);
+                            renderScreen();
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private static String budgetOccurrenceDate(String period, String startDate, YearMonth month) {
+        if (startDate == null || startDate.trim().isEmpty() || "monthly".equals(period)) {
+            return month.atDay(1).toString();
+        }
+        if (startDate.length() < 10) return null;
+        int startYear;
+        int startMonth;
+        try {
+            startYear = Integer.parseInt(startDate.substring(0, 4));
+            startMonth = Integer.parseInt(startDate.substring(5, 7));
+        } catch (Exception error) {
+            return null;
+        }
+        if (startMonth != month.getMonthValue()) return null;
+        if ("one_time".equals(period)) {
+            return startYear == month.getYear() ? startDate.substring(0, 10) : null;
+        }
+        if (month.getYear() < startYear) return null;
+        int day = 1;
+        try {
+            day = Integer.parseInt(startDate.substring(8, 10));
+        } catch (Exception ignored) {
+            day = 1;
+        }
+        return month.atDay(Math.max(1, Math.min(day, month.lengthOfMonth()))).toString();
+    }
+
+    private static String cashFlowDateInMonth(CashFlowRow flow, YearMonth month) {
+        if (flow.startDate == null || flow.startDate.trim().isEmpty()) return null;
+        try {
+            LocalDate start = LocalDate.parse(flow.startDate.trim());
+            return month.atDay(Math.max(1, Math.min(start.getDayOfMonth(), month.lengthOfMonth()))).toString();
+        } catch (Exception error) {
+            return null;
+        }
+    }
+
+    private static String longDateOf(String value) {
+        try {
+            return LocalDate.parse(value).format(
+                    DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault()));
+        } catch (Exception error) {
+            return value;
+        }
     }
 
     // ------------------------------------------------------------- cash flow CRUD
@@ -616,6 +994,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onShow(DialogInterface dialogInterface) {
                 final Button save = dialogHolder[0].getButton(AlertDialog.BUTTON_POSITIVE);
+                styleDialogButtons(dialogHolder[0]);
                 save.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
@@ -706,7 +1085,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmDeleteCashFlow(final CashFlowRow flow) {
-        new AlertDialog.Builder(this)
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Delete cash flow?")
                 .setMessage("Remove \"" + flow.name + "\" from your plan? Recorded actuals stay untouched.")
                 .setNegativeButton("Cancel", null)
@@ -738,7 +1117,14 @@ public final class MainActivity extends Activity {
                         });
                     }
                 })
-                .show();
+                .create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                styleDialogButtons(dialog);
+            }
+        });
+        dialog.show();
     }
 
     // ------------------------------------------------------------------ categories
@@ -786,6 +1172,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onShow(DialogInterface dialogInterface) {
                 final Button save = dialogHolder[0].getButton(AlertDialog.BUTTON_POSITIVE);
+                styleDialogButtons(dialogHolder[0]);
                 save.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
@@ -854,7 +1241,7 @@ public final class MainActivity extends Activity {
     private void addCandidateCard(LinearLayout parent, final Candidate candidate) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackgroundColor(Color.parseColor("#F5F5F5"));
+        card.setBackgroundColor(COLOR_SURFACE);
         card.setPadding(dp(12), dp(12), dp(12), dp(12));
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -865,6 +1252,7 @@ public final class MainActivity extends Activity {
                 .format(new Date(candidate.smsDate));
         TextView header = new TextView(this);
         header.setText(candidate.sender + "  •  " + date);
+        header.setTextColor(COLOR_TEXT);
         header.setTextSize(15f);
         header.setTypeface(Typeface.DEFAULT_BOLD);
         card.addView(header);
@@ -1236,11 +1624,18 @@ public final class MainActivity extends Activity {
                 }
             });
         }
-        builder.setNegativeButton("Close", null).show();
+        final AlertDialog dialog = builder.setNegativeButton("Close", null).create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                styleDialogButtons(dialog);
+            }
+        });
+        dialog.show();
     }
 
     private void confirmDeleteRule(final VendorRule rule) {
-        new AlertDialog.Builder(this)
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Delete vendor rule?")
                 .setMessage(rule.vendorName + "\n" + rule.vendorKey)
                 .setNegativeButton("Cancel", null)
@@ -1270,7 +1665,14 @@ public final class MainActivity extends Activity {
                         toast("Rule deleted: " + rule.vendorName);
                     }
                 })
-                .show();
+                .create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                styleDialogButtons(dialog);
+            }
+        });
+        dialog.show();
     }
 
     // --------------------------------------------------------------- view helpers
@@ -1278,6 +1680,7 @@ public final class MainActivity extends Activity {
     private TextView heading(String text) {
         TextView view = new TextView(this);
         view.setText(text);
+        view.setTextColor(COLOR_TEXT);
         view.setTextSize(22f);
         view.setTypeface(Typeface.DEFAULT_BOLD);
         return withTopMargin(view, dp(4));
@@ -1286,6 +1689,7 @@ public final class MainActivity extends Activity {
     private TextView note(String text) {
         TextView view = new TextView(this);
         view.setText(text);
+        view.setTextColor(COLOR_MUTED);
         view.setTextSize(14f);
         return withTopMargin(view, dp(8));
     }
@@ -1293,14 +1697,21 @@ public final class MainActivity extends Activity {
     private EditText textField(String hint, String value) {
         EditText view = new EditText(this);
         view.setHint(hint);
+        view.setHintTextColor(COLOR_MUTED);
         view.setText(value == null ? "" : value);
+        view.setTextColor(COLOR_TEXT);
         view.setTextSize(16f);
+        view.setBackgroundColor(COLOR_SURFACE_2);
+        view.setPadding(dp(12), dp(10), dp(12), dp(10));
         return withTopMargin(view, dp(8));
     }
 
     private Button button(String label, View.OnClickListener listener) {
         Button view = new Button(this);
         view.setText(label);
+        view.setTextColor(COLOR_DARK_TEXT);
+        view.setBackgroundColor(COLOR_TEAL);
+        view.setAllCaps(false);
         view.setOnClickListener(listener);
         return withTopMargin(view, dp(12));
     }
@@ -1308,6 +1719,9 @@ public final class MainActivity extends Activity {
     private Button choiceButton(String label, View.OnClickListener listener) {
         Button view = new Button(this);
         view.setText(label);
+        view.setTextColor(COLOR_TEXT);
+        view.setBackgroundColor(COLOR_SURFACE_2);
+        view.setAllCaps(false);
         view.setTextSize(13f);
         view.setOnClickListener(listener);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
@@ -1318,6 +1732,19 @@ public final class MainActivity extends Activity {
         }
         view.setLayoutParams(params);
         return view;
+    }
+
+    private void styleDialogButtons(AlertDialog dialog) {
+        styleDialogButton(dialog.getButton(AlertDialog.BUTTON_POSITIVE), true);
+        styleDialogButton(dialog.getButton(AlertDialog.BUTTON_NEGATIVE), false);
+        styleDialogButton(dialog.getButton(AlertDialog.BUTTON_NEUTRAL), false);
+    }
+
+    private static void styleDialogButton(Button button, boolean primary) {
+        if (button == null) return;
+        button.setTextColor(primary ? COLOR_DARK_TEXT : COLOR_MUTED);
+        button.setBackgroundColor(primary ? COLOR_TEAL : COLOR_SURFACE_2);
+        button.setAllCaps(false);
     }
 
     /** Pull the user's accounts from Supabase so custom funds appear in review cards. */
@@ -1411,8 +1838,7 @@ public final class MainActivity extends Activity {
 
     private Spinner categorySpinner(String selected) {
         ensureCategoryOption(selected);
-        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
-                android.R.layout.simple_list_item_1, categoryOptions);
+        ArrayAdapter<String> adapter = themedAdapter(categoryOptions);
         Spinner view = new Spinner(this);
         view.setAdapter(adapter);
         String value = selected == null ? "" : selected.trim();
@@ -1464,7 +1890,9 @@ public final class MainActivity extends Activity {
     private TextView accountTextView(String text) {
         TextView view = new TextView(this);
         view.setText(text);
+        view.setTextColor(COLOR_TEXT);
         view.setTextSize(16f);
+        view.setBackgroundColor(COLOR_SURFACE_2);
         view.setPadding(dp(10), dp(8), dp(10), dp(8));
         return view;
     }
@@ -1480,7 +1908,7 @@ public final class MainActivity extends Activity {
     private LinearLayout card() {
         LinearLayout view = new LinearLayout(this);
         view.setOrientation(LinearLayout.VERTICAL);
-        view.setBackgroundColor(Color.rgb(245, 245, 245));
+        view.setBackgroundColor(COLOR_SURFACE);
         view.setPadding(dp(12), dp(12), dp(12), dp(12));
         return withTopMargin(view, dp(12));
     }
@@ -1492,11 +1920,34 @@ public final class MainActivity extends Activity {
     }
 
     private void setSpinnerItems(Spinner spinner, List<String> values, String selected) {
-        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
-                android.R.layout.simple_list_item_1, values);
-        spinner.setAdapter(adapter);
+        spinner.setAdapter(themedAdapter(values));
         int position = values.indexOf(selected);
         spinner.setSelection(position >= 0 ? position : 0);
+    }
+
+    /** Spinner rows use the same surface colours as the rest of the companion. */
+    private ArrayAdapter<String> themedAdapter(List<String> values) {
+        return new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, values) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                return spinnerTextView(getItem(position));
+            }
+
+            @Override
+            public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                return spinnerTextView(getItem(position));
+            }
+        };
+    }
+
+    private TextView spinnerTextView(String value) {
+        TextView view = new TextView(this);
+        view.setText(value == null ? "" : value);
+        view.setTextColor(COLOR_TEXT);
+        view.setTextSize(15f);
+        view.setBackgroundColor(COLOR_SURFACE_2);
+        view.setPadding(dp(12), dp(10), dp(12), dp(10));
+        return view;
     }
 
     private List<String> categoryNamesFor(String kind) {

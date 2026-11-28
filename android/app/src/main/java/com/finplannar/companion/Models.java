@@ -82,3 +82,22 @@ final class CashFlowRow {
     CashFlowRow() {
     }
 }
+
+/** One planned or recorded line shown in the companion's month view. */
+final class MonthEvent {
+    String date = "";
+    String title = "";
+    String detail = "";
+    String kind = "expense";   // "income" or "expense"
+    boolean planned;
+    double amount;
+
+    MonthEvent(String date, String title, String detail, String kind, boolean planned, double amount) {
+        this.date = date;
+        this.title = title == null || title.trim().isEmpty() ? "Entry" : title.trim();
+        this.detail = detail == null ? "" : detail;
+        this.kind = "income".equals(kind) ? "income" : "expense";
+        this.planned = planned;
+        this.amount = Math.abs(amount);
+    }
+}

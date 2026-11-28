@@ -192,11 +192,36 @@ final class SupabaseApi {
         return new JSONArray(response);
     }
 
-    /** Recorded amounts in a date range, used by the dashboard's current-month totals. */
+    /** Planned spends (budgets) for the companion's month view. */
+    JSONArray fetchBudgets(String userId) throws IOException, JSONException {
+        String path = "/rest/v1/budgets?select=id,name,category,monthly_limit,period,start_date,rollover"
+                + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8")
+                + "&order=start_date.asc";
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
+    /** Calendar reschedules of budget occurrences; may not exist on older projects. */
+    JSONArray fetchBudgetMoves(String userId) throws IOException, JSONException {
+        String path = "/rest/v1/budget_moves?select=budget_id,from_date,to_date&user_id=eq."
+                + URLEncoder.encode(userId, "UTF-8");
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
+    JSONArray fetchMonthlyIncomes(String userId, String month) throws IOException, JSONException {
+        String path = "/rest/v1/monthly_incomes?select=month,amount,day,note&user_id=eq."
+                + URLEncoder.encode(userId, "UTF-8")
+                + "&month=eq." + URLEncoder.encode(month, "UTF-8");
+        String response = execute("GET", path, null, true, null);
+        return new JSONArray(response);
+    }
+
+    /** Recorded amounts in a date range, used by dashboard totals and the month view. */
     JSONArray fetchActuals(String userId, String fromDate, String toDate)
             throws IOException, JSONException {
-        String path = "/rest/v1/actuals?select=kind,amount&user_id=eq."
-                + URLEncoder.encode(userId, "UTF-8")
+        String path = "/rest/v1/actuals?select=kind,name,category,amount,date,event_key,account,source"
+                + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8")
                 + "&date=gte." + URLEncoder.encode(fromDate, "UTF-8")
                 + "&date=lte." + URLEncoder.encode(toDate, "UTF-8");
         String response = execute("GET", path, null, true, null);

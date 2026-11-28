@@ -254,6 +254,34 @@ final class CompanionDb extends SQLiteOpenHelper {
         return result;
     }
 
+    /** Ignored messages stay on the device so the user can review and un-ignore them. */
+    List<Candidate> ignoredCandidates(int limit) {
+        SQLiteDatabase db = getReadableDatabase();
+        String limitValue = limit > 0 ? String.valueOf(limit) : null;
+        Cursor cursor = db.query(TABLE_SMS_EVENTS, null, COL_IGNORED + " = 1", null, null, null,
+                COL_SMS_DATE + " DESC", limitValue);
+        List<Candidate> result = new ArrayList<>();
+        try {
+            while (cursor.moveToNext()) {
+                result.add(candidateFromCursor(cursor));
+            }
+        } finally {
+            cursor.close();
+        }
+        return result;
+    }
+
+    /** Send an ignored message back to SMS review as a fresh, unsynced candidate. */
+    void unignoreCandidate(String fingerprint) {
+        ContentValues values = new ContentValues();
+        values.put(COL_IGNORED, 0);
+        values.put(COL_REVIEWED, 0);
+        values.put(COL_SYNCED, 0);
+        values.putNull(COL_REMOTE_FLOW_ID);
+        getWritableDatabase().update(TABLE_SMS_EVENTS, values,
+                COL_FINGERPRINT + " = ?", new String[]{fingerprint});
+    }
+
     int countSynced() {
         return countWhere(COL_SYNCED + " = 1");
     }
