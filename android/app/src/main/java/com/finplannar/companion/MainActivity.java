@@ -117,6 +117,22 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class RecentPlanEntry {
+        final String name;
+        final String kind;
+        final double amount;
+        final String date;
+        final String fixedMonth;
+
+        RecentPlanEntry(String name, String kind, double amount, String date, String fixedMonth) {
+            this.name = name;
+            this.kind = kind;
+            this.amount = amount;
+            this.date = date;
+            this.fixedMonth = fixedMonth;
+        }
+    }
+
     private CompanionDb db;
     private SupabaseApi api;
     private ExecutorService executor;
@@ -131,7 +147,7 @@ public final class MainActivity extends Activity {
     private int smsVisibleLimit = VISIBLE_CANDIDATE_LIMIT;
     private String monthFilter = "all";
     private final Map<String, Double> cashFlowOverrides = new HashMap<>();
-    private final List<String> recentPlanEntries = new ArrayList<>();
+    private final List<RecentPlanEntry> recentPlanEntries = new ArrayList<>();
     private long lastBackPress;
     private TextView statusView;
     private TextView summaryView;
@@ -202,9 +218,9 @@ public final class MainActivity extends Activity {
         bottomNav.setOrientation(LinearLayout.HORIZONTAL);
         bottomNav.setBackgroundColor(COLOR_SURFACE);
         // Keep the tabs clear of the system gesture/navigation area.
-        bottomNav.setPadding(0, 0, 0, dp(28));
+        bottomNav.setPadding(0, dp(4), 0, dp(20));
         root.addView(bottomNav, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(94)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(88)));
         setContentView(root);
 
         if (savedInstanceState != null) {
@@ -1004,36 +1020,53 @@ public final class MainActivity extends Activity {
         LinearLayout tab = new LinearLayout(this);
         tab.setOrientation(LinearLayout.VERTICAL);
         tab.setGravity(android.view.Gravity.CENTER);
-        tab.setBackgroundColor(active ? COLOR_SURFACE_3 : COLOR_SURFACE);
         tab.setContentDescription(label);
         applyPressFeedback(tab);
         tab.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
+        LinearLayout pill = new LinearLayout(this);
+        pill.setOrientation(LinearLayout.VERTICAL);
+        pill.setGravity(android.view.Gravity.CENTER);
+        pill.setBackground(roundedBackground(active ? COLOR_SURFACE_3 : COLOR_SURFACE,
+                active ? COLOR_TEAL : Color.TRANSPARENT));
+        pill.setPadding(dp(12), dp(6), dp(12), dp(5));
+        pill.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         TextView iconView = new TextView(this);
         iconView.setText(icon);
-        iconView.setTextSize(19f);
+        iconView.setTextSize(18f);
         iconView.setTextColor(active ? COLOR_TEAL : COLOR_MUTED);
-        tab.addView(iconView);
+        pill.addView(iconView);
 
+        LinearLayout labelRow = new LinearLayout(this);
+        labelRow.setOrientation(LinearLayout.HORIZONTAL);
+        labelRow.setGravity(android.view.Gravity.CENTER);
         TextView labelView = new TextView(this);
         labelView.setText(label);
-        labelView.setTextSize(11f);
-        labelView.setTextColor(active ? COLOR_TEXT : COLOR_MUTED);
-        tab.addView(labelView);
+        labelView.setTextSize(10.5f);
+        labelView.setTextColor(active ? COLOR_TEAL : COLOR_MUTED);
+        labelView.setTypeface(active ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        labelRow.addView(labelView);
 
         if (!count.isEmpty()) {
             TextView badgeView = new TextView(this);
             badgeView.setText(count);
-            badgeView.setTextSize(10f);
+            badgeView.setTextSize(9f);
             badgeView.setTypeface(Typeface.DEFAULT_BOLD);
             badgeView.setTextColor(COLOR_DARK_TEXT);
-            badgeView.setBackground(roundedBackground(
-                    target == Screen.READY ? COLOR_TEAL : COLOR_AMBER,
-                    target == Screen.READY ? COLOR_TEAL : COLOR_AMBER));
-            badgeView.setPadding(dp(6), dp(1), dp(6), dp(1));
-            tab.addView(badgeView);
+            int badgeColor = target == Screen.READY ? COLOR_TEAL : COLOR_AMBER;
+            badgeView.setBackground(roundedBackground(badgeColor, badgeColor));
+            badgeView.setPadding(dp(5), dp(1), dp(5), dp(1));
+            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            badgeParams.leftMargin = dp(4);
+            badgeView.setLayoutParams(badgeParams);
+            labelRow.addView(badgeView);
         }
+        pill.addView(labelRow);
+        tab.addView(pill);
 
         tab.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -1085,35 +1118,73 @@ public final class MainActivity extends Activity {
     }
 
     private void renderDashboardScreen() {
+        YearMonth month = YearMonth.now();
+        String monthLabel = month.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()));
         content.addView(heading("Dashboard"));
+        content.addView(note("Your plan at a glance · " + monthLabel));
         addPlanSubNav();
-        content.addView(note(dashboardStatus));
+        statusView = statusPill(dashboardStatus);
+        content.addView(statusView);
 
         double plannedNet = dashboardPlannedIncome - dashboardPlannedExpense;
         double actualNet = dashboardActualIncome - dashboardActualExpense;
-        content.addView(note("Starting balance across accounts: "
-                + dashboardCurrency + " " + money(dashboardOpeningTotal)));
-        content.addView(note("Planned this month: +" + money(dashboardPlannedIncome)
-                + " income / -" + money(dashboardPlannedExpense)
-                + " expenses = " + (plannedNet >= 0 ? "+" : "") + money(plannedNet)));
-        content.addView(note("Recorded this month: +" + money(dashboardActualIncome)
-                + " income / -" + money(dashboardActualExpense)
-                + " expenses = " + (actualNet >= 0 ? "+" : "") + money(actualNet)));
-        content.addView(note("Simple projection at month end: " + dashboardCurrency + " "
-                + money(dashboardOpeningTotal + plannedNet)));
+        double projected = dashboardOpeningTotal + plannedNet;
 
-        content.addView(note("Accounts"));
-        for (AccountOption account : accountOptions) {
-            content.addView(note(account.name + " — " + dashboardCurrency + " "
-                    + money(account.openingBalance)));
+        LinearLayout hero = card();
+        hero.setBackground(roundedBackground(COLOR_SURFACE_3, COLOR_TEAL));
+        TextView heroLabel = new TextView(this);
+        heroLabel.setText("PROJECTED BALANCE");
+        heroLabel.setTextColor(COLOR_TEAL);
+        heroLabel.setTextSize(12f);
+        heroLabel.setTypeface(Typeface.DEFAULT_BOLD);
+        heroLabel.setAllCaps(true);
+        hero.addView(heroLabel);
+
+        TextView heroValue = new TextView(this);
+        heroValue.setText(dashboardCurrency + " " + money(projected));
+        heroValue.setTextColor(projected >= 0 ? COLOR_TEAL : COLOR_RED);
+        heroValue.setTextSize(30f);
+        heroValue.setTypeface(Typeface.DEFAULT_BOLD);
+        hero.addView(withTopMargin(heroValue, dp(4)));
+
+        TextView heroDetail = note("Opening " + dashboardCurrency + " "
+                + money(dashboardOpeningTotal) + "  •  planned net "
+                + signedMoney(plannedNet));
+        hero.addView(heroDetail);
+        content.addView(hero);
+
+        LinearLayout plannedStats = navRow();
+        plannedStats.addView(statCard("Planned income", "+" + money(dashboardPlannedIncome),
+                COLOR_TEAL));
+        plannedStats.addView(statCard("Planned spend", "-" + money(dashboardPlannedExpense),
+                COLOR_AMBER));
+        content.addView(plannedStats);
+
+        LinearLayout recordedStats = navRow();
+        recordedStats.addView(statCard("Recorded income", "+" + money(dashboardActualIncome),
+                COLOR_TEAL));
+        recordedStats.addView(statCard("Recorded spend", "-" + money(dashboardActualExpense),
+                COLOR_RED));
+        content.addView(recordedStats);
+
+        content.addView(note("Planned net " + signedMoney(plannedNet)
+                + "  •  Recorded net " + signedMoney(actualNet)));
+
+        content.addView(sectionTitle("Accounts"));
+        if (accountOptions.isEmpty()) {
+            content.addView(note("No accounts yet. Add one from the web app."));
+        } else {
+            for (AccountOption account : accountOptions) {
+                content.addView(accountRow(account));
+            }
         }
 
-        content.addView(note("Recent planned entries"));
+        content.addView(sectionTitle("Recent planned entries"));
         if (recentPlanEntries.isEmpty()) {
             content.addView(note("No planned entries yet. Add one in Cash flows."));
         } else {
-            for (String entry : recentPlanEntries) {
-                content.addView(note(entry));
+            for (RecentPlanEntry entry : recentPlanEntries) {
+                content.addView(planEntryCard(entry));
             }
         }
 
@@ -1165,7 +1236,7 @@ public final class MainActivity extends Activity {
                     final List<CashFlowRow> loadedFlows = cashFlowRowsFrom(flowRows);
                     final double[] plannedIncome = {0};
                     final double[] plannedExpense = {0};
-                    final List<String> recent = new ArrayList<String>();
+                    final List<RecentPlanEntry> recent = new ArrayList<RecentPlanEntry>();
                     for (CashFlowRow flow : loadedFlows) {
                         String flowMonth = flow.startDate != null && flow.startDate.length() >= 7
                                 ? flow.startDate.substring(0, 7) : monthKey;
@@ -1181,9 +1252,8 @@ public final class MainActivity extends Activity {
                             }
                         }
                         if (recent.size() < 5) {
-                            recent.add(flow.name + " • " + flow.kind + " • " + money(shownAmount)
-                                    + " • " + flow.startDate
-                                    + (fixed ? " • fixed for " + effectiveMonth : ""));
+                            recent.add(new RecentPlanEntry(flow.name, flow.kind, shownAmount,
+                                    flow.startDate, fixed ? effectiveMonth : ""));
                         }
                     }
                     for (int index = 0; index < incomeRows.length(); index += 1) {
@@ -1191,11 +1261,12 @@ public final class MainActivity extends Activity {
                         double amount = Math.abs(row.optDouble("amount", 0));
                         plannedIncome[0] += amount;
                         if (recent.size() < 5) {
-                            recent.add(valueOr(row.optString("note", ""), "Monthly income")
-                                    + " • income • " + money(amount) + " • " + from);
+                            recent.add(new RecentPlanEntry(
+                                    valueOr(row.optString("note", ""), "Monthly income"),
+                                    "income", amount, from, ""));
                         }
                     }
-                    final List<String> finalRecent = recent;
+                    final List<RecentPlanEntry> finalRecent = recent;
 
                     final double[] actualIncome = {0};
                     final double[] actualExpense = {0};
@@ -2460,6 +2531,105 @@ public final class MainActivity extends Activity {
         return withTopMargin(view, dp(6));
     }
 
+    private TextView statusPill(String text) {
+        TextView view = note(text);
+        view.setTextSize(12f);
+        view.setBackground(roundedBackground(COLOR_SURFACE_2, COLOR_BORDER));
+        view.setPadding(dp(10), dp(6), dp(10), dp(6));
+        return view;
+    }
+
+    private static String signedMoney(double amount) {
+        return (amount >= 0 ? "+" : "-") + money(Math.abs(amount));
+    }
+
+    private LinearLayout accountRow(AccountOption account) {
+        LinearLayout row = card();
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        TextView initial = new TextView(this);
+        String name = account.name == null ? "" : account.name.trim();
+        initial.setText(name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase(Locale.getDefault()));
+        initial.setTextColor(COLOR_TEAL);
+        initial.setTextSize(16f);
+        initial.setTypeface(Typeface.DEFAULT_BOLD);
+        initial.setGravity(android.view.Gravity.CENTER);
+        initial.setBackground(roundedBackground(COLOR_SURFACE_3, COLOR_BORDER));
+        LinearLayout.LayoutParams initialParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        initialParams.rightMargin = dp(12);
+        initial.setLayoutParams(initialParams);
+        row.addView(initial);
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView nameView = new TextView(this);
+        nameView.setText(name.isEmpty() ? "Account" : name);
+        nameView.setTextColor(COLOR_TEXT);
+        nameView.setTextSize(15f);
+        nameView.setTypeface(Typeface.DEFAULT_BOLD);
+        nameView.setMaxLines(1);
+        nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        details.addView(nameView);
+        details.addView(note("Opening balance"));
+        row.addView(details);
+
+        TextView amount = new TextView(this);
+        amount.setText(dashboardCurrency + " " + money(account.openingBalance));
+        amount.setTextColor(COLOR_TEXT);
+        amount.setTextSize(15f);
+        amount.setTypeface(Typeface.DEFAULT_BOLD);
+        amount.setGravity(android.view.Gravity.END);
+        row.addView(amount);
+        return row;
+    }
+
+    private LinearLayout planEntryCard(RecentPlanEntry entry) {
+        LinearLayout row = card();
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        boolean income = "income".equals(entry.kind);
+
+        TextView arrow = new TextView(this);
+        arrow.setText(income ? "↑" : "↓");
+        arrow.setTextColor(income ? COLOR_TEAL : COLOR_AMBER);
+        arrow.setTextSize(21f);
+        arrow.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams arrowParams = new LinearLayout.LayoutParams(
+                dp(30), ViewGroup.LayoutParams.WRAP_CONTENT);
+        arrowParams.rightMargin = dp(4);
+        arrow.setLayoutParams(arrowParams);
+        row.addView(arrow);
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView nameView = new TextView(this);
+        nameView.setText(entry.name);
+        nameView.setTextColor(COLOR_TEXT);
+        nameView.setTextSize(15f);
+        nameView.setTypeface(Typeface.DEFAULT_BOLD);
+        nameView.setMaxLines(1);
+        nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        details.addView(nameView);
+        String meta = entry.kind + "  •  " + entry.date;
+        if (!entry.fixedMonth.isEmpty()) meta += "  •  split-adjusted " + entry.fixedMonth;
+        details.addView(note(meta));
+        row.addView(details);
+
+        TextView amount = new TextView(this);
+        amount.setText(dashboardCurrency + " " + money(entry.amount));
+        amount.setTextColor(income ? COLOR_TEAL : COLOR_AMBER);
+        amount.setTextSize(15f);
+        amount.setTypeface(Typeface.DEFAULT_BOLD);
+        amount.setGravity(android.view.Gravity.END);
+        row.addView(amount);
+        return row;
+    }
+
     private LinearLayout statCard(String label, String value, int color) {
         LinearLayout view = new LinearLayout(this);
         view.setOrientation(LinearLayout.VERTICAL);
@@ -2469,6 +2639,7 @@ public final class MainActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         params.topMargin = dp(10);
         params.leftMargin = dp(5);
+        params.rightMargin = dp(5);
         view.setLayoutParams(params);
 
         TextView labelView = new TextView(this);

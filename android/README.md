@@ -34,11 +34,12 @@ transactions into the same Supabase account.
   `source = 'sms'`, so the web app can filter them under **SMS** and remove them with
   **Remove SMS imports** without touching manual entries. Learned vendor preferences are
   stored locally and upserted to `vendor_rules`.
-- **Dashboard.** A signed-in dashboard shows the sum of account opening balances, this
-  month's planned income/expenses from your cash-flow schedules and monthly incomes, this
-  month's recorded amounts, and a simple month-end projection. Calendar splits are honored
-  through `cash_flow_overrides`, so a split reduces the original entry instead of adding a
-  second full amount. Account names and the currency label come from Supabase.
+- **Dashboard.** A signed-in dashboard uses cards and stat tiles to show the sum of account
+  opening balances, this month's planned income/expenses from your cash-flow schedules and
+  monthly incomes, this month's recorded amounts, and a prominent month-end projection.
+  Accounts and recent plans get their own compact lists. Calendar splits are honored through
+  `cash_flow_overrides`, so a split reduces the original entry instead of adding a second
+  full amount. Account names and the currency label come from Supabase.
 - **Cash-flow CRUD.** The **Cash flows** tab lists planned entries from `cash_flows` and
   lets you add, edit or delete them. Name, amount, kind, category, account, schedule, start
   date and repeat interval are editable. Calendar splits appear as split-adjusted amounts
@@ -55,7 +56,8 @@ transactions into the same Supabase account.
   add a new one to `categories`. It immediately becomes available in cash-flow and SMS
   review pickers. `Other` exists in both lists as the fallback.
 - **Navigation and feedback.** The bottom bar keeps **Plan / SMS / Ready / Month / Ignored**
-  one tap away, with counts for pending, ready and ignored messages. The SMS screen has
+  one tap away in a compact bar with an active-tab pill and counts for pending, ready and
+  ignored messages. The SMS screen has
   search and **Load more**, the Scan button shows progress, and **Save selected** asks for
   confirmation. Screen state, filters and scroll position survive rotation, and Back returns
   to SMS review from any other screen.
