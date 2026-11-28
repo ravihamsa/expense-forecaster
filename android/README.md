@@ -43,8 +43,10 @@ transactions into the same Supabase account.
   the matching `budgets` amount for every budgeted or recorded category. It shows over, under
   and on-budget categories together, sorted by variance, with a short summary of each group.
   Calendar splits are honored through `cash_flow_overrides`, so a split reduces the original
-  entry instead of adding a second full amount. Account names and the currency label come from
-  Supabase.
+  entry instead of adding a second full amount. Tapping a category card opens a detail screen
+  with that category's recorded spends and an **Edit spend** action that patches the underlying
+  `actuals` row (and the linked `cash_flows` row for SMS imports). Account names and the
+  currency label come from Supabase.
 - **Cash-flow CRUD.** The **Cash flows** tab lists planned entries from `cash_flows` and
   lets you add, edit or delete them. Name, amount, kind, category, account, schedule, start
   date and repeat interval are editable. Calendar splits appear as split-adjusted amounts

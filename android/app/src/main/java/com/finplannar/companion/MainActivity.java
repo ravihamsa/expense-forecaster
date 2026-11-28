@@ -100,7 +100,9 @@ public final class MainActivity extends Activity {
             "monthly", "one_time", "yearly", "every_n_months", "every_n_years"
     };
 
-    private enum Screen { SCAN, DASHBOARD, CASH_FLOWS, CATEGORIES, MONTH_VIEW, IGNORED, READY }
+    private enum Screen {
+        SCAN, DASHBOARD, CASH_FLOWS, CATEGORIES, MONTH_VIEW, IGNORED, READY, CATEGORY_SPENDS
+    }
 
     private static final class AccountOption {
         final String id;
@@ -175,6 +177,11 @@ public final class MainActivity extends Activity {
     private final Map<String, Double> cashFlowOverrides = new HashMap<>();
     private final List<RecentPlanEntry> recentPlanEntries = new ArrayList<>();
     private final List<CategoryBudgetStatus> categoryBudgets = new ArrayList<>();
+    private String categorySpendCategory = "";
+    private double categorySpendBudget;
+    private double categorySpendTotal;
+    private String categorySpendStatus = "Loading spends…";
+    private final List<MonthEvent> categorySpendEvents = new ArrayList<>();
     private long lastBackPress;
     private TextView statusView;
     private TextView summaryView;
@@ -274,6 +281,12 @@ public final class MainActivity extends Activity {
             smsQuery = valueOr(savedInstanceState.getString("smsQuery"), "");
             smsVisibleLimit = savedInstanceState.getInt("smsLimit", VISIBLE_CANDIDATE_LIMIT);
             monthFilter = valueOr(savedInstanceState.getString("monthFilter"), "all");
+            categorySpendCategory = valueOr(
+                    savedInstanceState.getString("categorySpendCategory"), "");
+            categorySpendBudget = savedInstanceState.getDouble("categorySpendBudget", 0);
+            if (screen == Screen.CATEGORY_SPENDS && categorySpendCategory.isEmpty()) {
+                screen = Screen.DASHBOARD;
+            }
         }
 
         renderScreen();
@@ -290,11 +303,17 @@ public final class MainActivity extends Activity {
         outState.putString("smsQuery", smsQuery);
         outState.putInt("smsLimit", smsVisibleLimit);
         outState.putString("monthFilter", monthFilter);
+        outState.putString("categorySpendCategory", categorySpendCategory);
+        outState.putDouble("categorySpendBudget", categorySpendBudget);
         super.onSaveInstanceState(outState);
     }
 
     @Override
     public void onBackPressed() {
+        if (screen == Screen.CATEGORY_SPENDS) {
+            goTo(Screen.DASHBOARD);
+            return;
+        }
         if (screen == Screen.SCAN) {
             if (SystemClock.elapsedRealtime() - lastBackPress < 2000) {
                 super.onBackPressed();
@@ -340,6 +359,9 @@ public final class MainActivity extends Activity {
                 break;
             case MONTH_VIEW:
                 renderMonthViewScreen();
+                break;
+            case CATEGORY_SPENDS:
+                renderCategorySpendsScreen();
                 break;
             case IGNORED:
                 renderIgnoredScreen();
@@ -877,7 +899,11 @@ public final class MainActivity extends Activity {
                                                 public void run() {
                                                     holder[0].dismiss();
                                                     toast("Expense updated");
-                                                    loadMonthView();
+                                                    if (screen == Screen.CATEGORY_SPENDS) {
+                                                        loadCategorySpends();
+                                                    } else {
+                                                        loadMonthView();
+                                                    }
                                                     renderScreen();
                                                 }
                                             });
@@ -1059,7 +1085,8 @@ public final class MainActivity extends Activity {
 
     private void addTab(String icon, String label, final Screen target, String count) {
         boolean active = screen == target
-                || (target == Screen.DASHBOARD && (screen == Screen.CASH_FLOWS || screen == Screen.CATEGORIES));
+                || (target == Screen.DASHBOARD && (screen == Screen.CASH_FLOWS
+                        || screen == Screen.CATEGORIES || screen == Screen.CATEGORY_SPENDS));
         LinearLayout tab = new LinearLayout(this);
         tab.setOrientation(LinearLayout.VERTICAL);
         tab.setGravity(android.view.Gravity.CENTER);
@@ -1131,6 +1158,9 @@ public final class MainActivity extends Activity {
         }
         if (target == Screen.CASH_FLOWS) {
             loadCashFlows();
+        }
+        if (target == Screen.CATEGORY_SPENDS) {
+            loadCategorySpends();
         }
         screen = target;
         scrollView.scrollTo(0, 0);
@@ -1698,6 +1728,127 @@ public final class MainActivity extends Activity {
         } catch (Exception error) {
             return value;
         }
+    }
+
+    // -------------------------------------------------------- category spend detail
+
+    private void openCategorySpends(CategoryBudgetStatus item) {
+        categorySpendCategory = item.category;
+        categorySpendBudget = item.budget;
+        categorySpendTotal = item.recorded;
+        goTo(Screen.CATEGORY_SPENDS);
+    }
+
+    private void renderCategorySpendsScreen() {
+        content.addView(heading(valueOr(categorySpendCategory, "Category spends")));
+        content.addView(note("Recorded spends · "
+                + YearMonth.now().format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))));
+        content.addView(choiceButton("← Dashboard", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                goTo(Screen.DASHBOARD);
+            }
+        }));
+        content.addView(statusPill(categorySpendStatus));
+
+        LinearLayout stats = navRow();
+        stats.addView(statCard("Budget", money(categorySpendBudget), COLOR_AMBER));
+        stats.addView(statCard("Recorded", money(categorySpendTotal), COLOR_RED));
+        content.addView(stats);
+
+        if (categorySpendEvents.isEmpty()) {
+            content.addView(note("No recorded spends in this category this month."));
+        } else {
+            for (final MonthEvent event : categorySpendEvents) {
+                LinearLayout card = card();
+                TextView title = new TextView(this);
+                title.setText("↓ " + event.title + "  •  " + money(event.amount));
+                title.setTextColor(COLOR_RED);
+                title.setTextSize(16f);
+                title.setTypeface(Typeface.DEFAULT_BOLD);
+                card.addView(title);
+                card.addView(note(longDateOf(event.date) + "  •  " + event.detail));
+                card.addView(button("Edit spend", new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        showMonthEventEditor(event);
+                    }
+                }));
+                content.addView(card);
+            }
+        }
+    }
+
+    private void loadCategorySpends() {
+        if (!api.isSignedIn() || categorySpendCategory.isEmpty()) return;
+        categorySpendStatus = "Loading spends…";
+        final String category = categorySpendCategory;
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String userId = api.getUserId();
+                    YearMonth month = YearMonth.now();
+                    String from = month.atDay(1).toString();
+                    String to = month.atEndOfMonth().toString();
+                    JSONArray actualRows = api.fetchActuals(userId, from, to);
+                    List<MonthEvent> events = new ArrayList<MonthEvent>();
+                    double total = 0;
+                    for (int index = 0; index < actualRows.length(); index += 1) {
+                        JSONObject row = actualRows.getJSONObject(index);
+                        String rowCategory = valueOr(row.optString("category", ""), "Other").trim();
+                        String date = row.optString("date", "");
+                        if (!rowCategory.equalsIgnoreCase(category)) continue;
+                        if ("income".equals(row.optString("kind", ""))) continue;
+                        if (!date.startsWith(month.toString())) continue;
+                        double amount = Math.abs(row.optDouble("amount", 0));
+                        String source = valueOr(row.optString("source", ""), "manual");
+                        String title = valueOr(row.optString("name", ""),
+                                valueOr(rowCategory, "Recorded"));
+                        String detail = rowCategory + " · Recorded"
+                                + ("sms".equals(source) ? " · SMS" : "");
+                        MonthEvent event = new MonthEvent(date, title, detail,
+                                "expense", false, amount);
+                        event.refId = row.optString("event_key", "");
+                        event.category = rowCategory;
+                        event.source = source;
+                        events.add(event);
+                        total += amount;
+                    }
+                    Collections.sort(events, new Comparator<MonthEvent>() {
+                        @Override
+                        public int compare(MonthEvent left, MonthEvent right) {
+                            int byDate = right.date.compareTo(left.date);
+                            if (byDate != 0) return byDate;
+                            return left.title.compareTo(right.title);
+                        }
+                    });
+                    final List<MonthEvent> loadedEvents = events;
+                    final double finalTotal = total;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen != Screen.CATEGORY_SPENDS
+                                    || !category.equals(categorySpendCategory)) return;
+                            categorySpendEvents.clear();
+                            categorySpendEvents.addAll(loadedEvents);
+                            categorySpendTotal = finalTotal;
+                            categorySpendStatus = "Updated " + dateTimeOf(System.currentTimeMillis());
+                            renderScreen();
+                        }
+                    });
+                } catch (final Exception error) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (screen != Screen.CATEGORY_SPENDS) return;
+                            categorySpendStatus = "Could not load spends: " + message(error);
+                            renderScreen();
+                        }
+                    });
+                }
+            }
+        });
     }
 
     // ------------------------------------------------------------- cash flow CRUD
@@ -2762,6 +2913,14 @@ public final class MainActivity extends Activity {
         caption.setGravity(android.view.Gravity.END);
         amounts.addView(caption);
         row.addView(amounts);
+        row.setContentDescription("View " + item.category + " spends");
+        applyPressFeedback(row);
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                openCategorySpends(item);
+            }
+        });
         return row;
     }
 
