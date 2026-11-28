@@ -35,11 +35,13 @@ transactions into the same Supabase account.
   **Remove SMS imports** without touching manual entries. Learned vendor preferences are
   stored locally and upserted to `vendor_rules`.
 - **Dashboard.** A signed-in dashboard uses cards and stat tiles to show the sum of account
-  opening balances, this month's planned income/expenses from your cash-flow schedules and
-  monthly incomes, this month's recorded amounts, and a prominent month-end projection.
-  Accounts and recent plans get their own compact lists. Calendar splits are honored through
-  `cash_flow_overrides`, so a split reduces the original entry instead of adding a second
-  full amount. Account names and the currency label come from Supabase.
+  opening balances, this month's planned income from cash-flow schedules and monthly incomes,
+  this month's planned spends from `budgets`, this month's recorded amounts from `actuals`,
+  and a prominent month-end projection. Accounts and **Recent activity** get their own compact
+  lists; recent titles follow edits to budgets and actuals instead of stale SMS cash flows.
+  Calendar splits are honored through `cash_flow_overrides`, so a split reduces the original
+  entry instead of adding a second full amount. Account names and the currency label come from
+  Supabase.
 - **Cash-flow CRUD.** The **Cash flows** tab lists planned entries from `cash_flows` and
   lets you add, edit or delete them. Name, amount, kind, category, account, schedule, start
   date and repeat interval are editable. Calendar splits appear as split-adjusted amounts
@@ -50,8 +52,9 @@ transactions into the same Supabase account.
   inspect its entries; expense cards offer **Edit planned category** (updates
   `budgets.monthly_limit`, `name` and `category`), **Move planned date** (adds a
   `budget_moves` row for that occurrence), or **Edit recorded category** (updates
-  `actuals.amount`, `name` and `category`). Changes are PATCHed to Supabase for the
-  signed-in user and the month reloads. Split-adjusted income entries are marked as such.
+  `actuals.amount`, `name` and `category`; SMS imports also update their linked `cash_flows`
+  row). Changes are PATCHed to Supabase for the signed-in user and the month reloads.
+  Split-adjusted income entries are marked as such.
 - **Add categories.** The **Categories** tab lists your expense and income names and can
   add a new one to `categories`. It immediately becomes available in cash-flow and SMS
   review pickers. `Other` exists in both lists as the fallback.

@@ -56,6 +56,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -122,14 +123,17 @@ public final class MainActivity extends Activity {
         final String kind;
         final double amount;
         final String date;
-        final String fixedMonth;
+        final String source;
+        final String detail;
 
-        RecentPlanEntry(String name, String kind, double amount, String date, String fixedMonth) {
+        RecentPlanEntry(String name, String kind, double amount, String date,
+                        String source, String detail) {
             this.name = name;
             this.kind = kind;
             this.amount = amount;
             this.date = date;
-            this.fixedMonth = fixedMonth;
+            this.source = source;
+            this.detail = detail;
         }
     }
 
@@ -828,6 +832,16 @@ public final class MainActivity extends Activity {
                                                 api.updateBudget(userId, event.refId, payload);
                                             } else {
                                                 api.updateActual(userId, event.refId, payload);
+                                                // SMS imports keep a cash_flows row as the
+                                                // recorded source. Keep its title in sync so
+                                                // the Cash flows screen is not stale.
+                                                String eventKey = event.refId;
+                                                int separator = eventKey.lastIndexOf('-');
+                                                if ("sms".equals(event.source) && separator == 36) {
+                                                    api.updateCashFlow(
+                                                            eventKey.substring(0, separator),
+                                                            userId, payload);
+                                                }
                                             }
                                             runOnUiThread(new Runnable() {
                                                 @Override
@@ -1179,9 +1193,9 @@ public final class MainActivity extends Activity {
             }
         }
 
-        content.addView(sectionTitle("Recent planned entries"));
+        content.addView(sectionTitle("Recent activity"));
         if (recentPlanEntries.isEmpty()) {
-            content.addView(note("No planned entries yet. Add one in Cash flows."));
+            content.addView(note("No plans or recorded amounts yet."));
         } else {
             for (RecentPlanEntry entry : recentPlanEntries) {
                 content.addView(planEntryCard(entry));
@@ -1215,8 +1229,22 @@ public final class MainActivity extends Activity {
                     JSONArray flowRows = api.fetchCashFlows(userId);
                     JSONArray incomeRows = api.fetchMonthlyIncomes(userId, monthKey);
                     JSONArray actualRows = api.fetchActuals(userId, from, to);
+                    JSONArray budgetRows = api.fetchBudgets(userId);
+                    JSONArray moveRows;
+                    try {
+                        moveRows = api.fetchBudgetMoves(userId);
+                    } catch (Exception missingTable) {
+                        moveRows = new JSONArray();
+                    }
                     final Map<String, Double> loadedOverrides =
                             overridesFrom(api.fetchCashFlowOverrides(userId));
+
+                    Map<String, String> moves = new LinkedHashMap<String, String>();
+                    for (int index = 0; index < moveRows.length(); index += 1) {
+                        JSONObject move = moveRows.getJSONObject(index);
+                        moves.put(move.optString("budget_id", "") + "|"
+                                + move.optString("from_date", ""), move.optString("to_date", ""));
+                    }
 
                     final String currency = profileRows.length() > 0
                             ? valueOr(profileRows.getJSONObject(0).optString("currency", ""), "INR")
@@ -1233,52 +1261,96 @@ public final class MainActivity extends Activity {
                         openingTotal[0] += balance;
                     }
 
+                    // Budgets are the only future expense source. SMS expense cash flows
+                    // stay recorded spends and must not drive dashboard titles or totals.
                     final List<CashFlowRow> loadedFlows = cashFlowRowsFrom(flowRows);
                     final double[] plannedIncome = {0};
                     final double[] plannedExpense = {0};
                     final List<RecentPlanEntry> recent = new ArrayList<RecentPlanEntry>();
-                    for (CashFlowRow flow : loadedFlows) {
-                        String flowMonth = flow.startDate != null && flow.startDate.length() >= 7
-                                ? flow.startDate.substring(0, 7) : monthKey;
-                        String effectiveMonth = occursInMonth(flow, month) ? monthKey : flowMonth;
-                        double shownAmount = cashFlowAmountFor(flow, effectiveMonth, loadedOverrides);
-                        boolean fixed = loadedOverrides.containsKey(
-                                cashFlowOverrideKey(flow.id, effectiveMonth));
-                        if (occursInMonth(flow, month)) {
-                            if ("income".equals(flow.kind)) {
-                                plannedIncome[0] += shownAmount;
-                            } else {
-                                plannedExpense[0] += shownAmount;
+                    HashSet<String> usedBudgetKeys = new HashSet<String>();
+                    for (int index = 0; index < budgetRows.length(); index += 1) {
+                        JSONObject row = budgetRows.getJSONObject(index);
+                        String id = row.optString("id", "");
+                        if (id.isEmpty()) continue;
+                        String title = valueOr(row.optString("name", ""),
+                                valueOr(row.optString("category", ""), "Planned spend"));
+                        String category = valueOr(row.optString("category", ""), "Other");
+                        double amount = Math.abs(row.optDouble("monthly_limit", 0));
+                        String period = valueOr(row.optString("period", ""), "monthly");
+                        String startDate = row.optString("start_date", "");
+                        for (int offset = -1; offset <= 1; offset += 1) {
+                            YearMonth occurrenceMonth = month.plusMonths(offset);
+                            String occurrence = budgetOccurrenceDate(period, startDate, occurrenceMonth);
+                            if (occurrence == null) continue;
+                            String target = moves.get(id + "|" + occurrence);
+                            String effective = target == null || target.isEmpty() ? occurrence : target;
+                            if (!effective.startsWith(monthKey)) continue;
+                            String key = "budget-" + id + "-" + occurrence;
+                            if (!usedBudgetKeys.add(key)) continue;
+                            plannedExpense[0] += amount;
+                            String detail = category;
+                            if (target != null && !target.isEmpty()) {
+                                detail += " · moved from " + longDateOf(occurrence);
                             }
+                            recent.add(new RecentPlanEntry(title, "expense", amount,
+                                    effective, "Planned", detail));
                         }
-                        if (recent.size() < 5) {
-                            recent.add(new RecentPlanEntry(flow.name, flow.kind, shownAmount,
-                                    flow.startDate, fixed ? effectiveMonth : ""));
-                        }
+                    }
+
+                    // Income still comes from cash-flow schedules and monthly income.
+                    for (CashFlowRow flow : loadedFlows) {
+                        if (!"income".equals(flow.kind) || !occursInMonth(flow, month)) continue;
+                        String date = cashFlowDateInMonth(flow, month);
+                        if (date == null) continue;
+                        double shownAmount = cashFlowAmountFor(flow, monthKey, loadedOverrides);
+                        boolean fixed = loadedOverrides.containsKey(
+                                cashFlowOverrideKey(flow.id, monthKey));
+                        plannedIncome[0] += shownAmount;
+                        String detail = valueOr(flow.category, "Other");
+                        if (fixed) detail += " · split-adjusted " + monthKey;
+                        recent.add(new RecentPlanEntry(flow.name, "income", shownAmount,
+                                date, "Planned", detail));
                     }
                     for (int index = 0; index < incomeRows.length(); index += 1) {
                         JSONObject row = incomeRows.getJSONObject(index);
                         double amount = Math.abs(row.optDouble("amount", 0));
+                        int day = Math.max(1, Math.min(month.lengthOfMonth(), row.optInt("day", 1)));
                         plannedIncome[0] += amount;
-                        if (recent.size() < 5) {
-                            recent.add(new RecentPlanEntry(
-                                    valueOr(row.optString("note", ""), "Monthly income"),
-                                    "income", amount, from, ""));
-                        }
+                        recent.add(new RecentPlanEntry(
+                                valueOr(row.optString("note", ""), "Monthly income"),
+                                "income", amount, month.atDay(day).toString(),
+                                "Planned", "Income"));
                     }
-                    final List<RecentPlanEntry> finalRecent = recent;
 
                     final double[] actualIncome = {0};
                     final double[] actualExpense = {0};
                     for (int index = 0; index < actualRows.length(); index += 1) {
                         JSONObject row = actualRows.getJSONObject(index);
-                        double amount = row.optDouble("amount", 0);
-                        if ("income".equals(row.optString("kind", ""))) {
-                            actualIncome[0] += amount;
-                        } else {
-                            actualExpense[0] += amount;
-                        }
+                        double amount = Math.abs(row.optDouble("amount", 0));
+                        boolean income = "income".equals(row.optString("kind", ""));
+                        if (income) actualIncome[0] += amount;
+                        else actualExpense[0] += amount;
+                        String title = valueOr(row.optString("name", ""),
+                                valueOr(row.optString("category", ""), "Recorded"));
+                        String category = valueOr(row.optString("category", ""), "Other");
+                        String source = valueOr(row.optString("source", ""), "manual");
+                        String detail = category + ("sms".equals(source) ? " · SMS" : "");
+                        recent.add(new RecentPlanEntry(title, income ? "income" : "expense",
+                                amount, row.optString("date", ""), "Recorded", detail));
                     }
+
+                    Collections.sort(recent, new Comparator<RecentPlanEntry>() {
+                        @Override
+                        public int compare(RecentPlanEntry left, RecentPlanEntry right) {
+                            int byDate = right.date.compareTo(left.date);
+                            if (byDate != 0) return byDate;
+                            int bySource = left.source.compareTo(right.source);
+                            if (bySource != 0) return bySource;
+                            return left.name.compareTo(right.name);
+                        }
+                    });
+                    while (recent.size() > 6) recent.remove(recent.size() - 1);
+                    final List<RecentPlanEntry> finalRecent = recent;
 
                     runOnUiThread(new Runnable() {
                         @Override
@@ -2615,8 +2687,8 @@ public final class MainActivity extends Activity {
         nameView.setMaxLines(1);
         nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         details.addView(nameView);
-        String meta = entry.kind + "  •  " + entry.date;
-        if (!entry.fixedMonth.isEmpty()) meta += "  •  split-adjusted " + entry.fixedMonth;
+        String meta = entry.source + "  •  " + entry.date;
+        if (!entry.detail.isEmpty()) meta += "  •  " + entry.detail;
         details.addView(note(meta));
         row.addView(details);
 
