@@ -25,6 +25,10 @@ transactions into the same Supabase account.
   (including custom funds), and **Expense / Income / Ignore** buttons. A choice removes the card from the
   review queue and moves it to **Ready to save**; nothing is uploaded until you tap
   **Save selected**.
+- **Pre-save review.** The **Ready to save** screen lists every queued row with the same
+  editable fields. You can change amount/name/kind/category/account, return a row to SMS
+  review, or ignore it. **Ignored SMS** lists parser-dismissed messages and lets you
+  un-ignore them so they come back for review.
 - **Existing tables.** Confirmed rows go to `cash_flows` (as `one_time`) and `actuals`
   (with the same `flowId-epochMillis` event key the web app uses). Both rows carry
   `source = 'sms'`, so the web app can filter them under **SMS** and remove them with
@@ -38,6 +42,11 @@ transactions into the same Supabase account.
   lets you add, edit or delete them. Name, amount, kind, category, account, schedule, start
   date and repeat interval are editable. SMS-imported rows keep `source = 'sms'` when
   edited. Deleting a plan does not delete recorded actuals.
+- **Month view with editable expenses.** The **Month** tab shows a seven-column calendar
+  with planned and recorded entries. Tap a day to inspect its entries; expense cards offer
+  **Edit planned category** (updates `budgets.monthly_limit`, `name` and `category`) or
+  **Edit recorded category** (updates `actuals.amount`, `name` and `category`). Changes are
+  PATCHed to Supabase for the signed-in user and the month reloads.
 - **Add categories.** The **Categories** tab lists your expense and income names and can
   add a new one to `categories`. It immediately becomes available in cash-flow and SMS
   review pickers. `Other` exists in both lists as the fallback.

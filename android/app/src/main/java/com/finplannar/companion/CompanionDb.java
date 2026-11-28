@@ -227,6 +227,21 @@ final class CompanionDb extends SQLiteOpenHelper {
                 + COL_SMS_DATE + " >= ?", sinceMillis, 0);
     }
 
+    /** Non-ignored rows the user has confirmed but not saved yet. */
+    List<Candidate> readyCandidates(long sinceMillis) {
+        return candidatesWhere(COL_SYNCED + " = 0 AND " + COL_REVIEWED + " = 1 AND "
+                + COL_IGNORED + " = 0 AND " + COL_SMS_DATE + " >= ?", sinceMillis, 0);
+    }
+
+    /** Put a queued row back into SMS review without changing its saved-remote identity. */
+    void returnToReview(String fingerprint) {
+        ContentValues values = new ContentValues();
+        values.put(COL_REVIEWED, 0);
+        values.put(COL_IGNORED, 0);
+        getWritableDatabase().update(TABLE_SMS_EVENTS, values,
+                COL_FINGERPRINT + " = ?", new String[]{fingerprint});
+    }
+
     int countPending(long sinceMillis) {
         return countWhere(COL_SYNCED + " = 0 AND " + COL_REVIEWED + " = 0 AND "
                 + COL_SMS_DATE + " >= ?", new String[]{String.valueOf(sinceMillis)});
@@ -234,7 +249,8 @@ final class CompanionDb extends SQLiteOpenHelper {
 
     int countReadyToSave(long sinceMillis) {
         return countWhere(COL_SYNCED + " = 0 AND " + COL_REVIEWED + " = 1 AND "
-                + COL_SMS_DATE + " >= ?", new String[]{String.valueOf(sinceMillis)});
+                + COL_IGNORED + " = 0 AND " + COL_SMS_DATE + " >= ?",
+                new String[]{String.valueOf(sinceMillis)});
     }
 
     private List<Candidate> candidatesWhere(String where, long sinceMillis, int limit) {

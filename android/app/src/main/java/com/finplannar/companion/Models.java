@@ -91,6 +91,9 @@ final class MonthEvent {
     String kind = "expense";   // "income" or "expense"
     boolean planned;
     double amount;
+    String refId = "";         // budget id or actual event_key, used for editing
+    String category = "Other";
+    String source = "manual";
 
     MonthEvent(String date, String title, String detail, String kind, boolean planned, double amount) {
         this.date = date;

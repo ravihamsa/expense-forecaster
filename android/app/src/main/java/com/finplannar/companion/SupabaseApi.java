@@ -228,6 +228,22 @@ final class SupabaseApi {
         return new JSONArray(response);
     }
 
+    /** Change the category of a planned spend from the companion's month view. */
+    void updateBudget(String userId, String budgetId, JSONObject patch)
+            throws IOException, JSONException {
+        String path = "/rest/v1/budgets?id=eq." + URLEncoder.encode(budgetId, "UTF-8")
+                + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8");
+        execute("PATCH", path, patch, true, "return=minimal");
+    }
+
+    /** Change the category (or name/amount) of a recorded spend from the month view. */
+    void updateActual(String userId, String eventKey, JSONObject patch)
+            throws IOException, JSONException {
+        String path = "/rest/v1/actuals?event_key=eq." + URLEncoder.encode(eventKey, "UTF-8")
+                + "&user_id=eq." + URLEncoder.encode(userId, "UTF-8");
+        execute("PATCH", path, patch, true, "return=minimal");
+    }
+
     String createCashFlow(JSONObject row) throws IOException, JSONException {
         String response = execute("POST", "/rest/v1/cash_flows", row,
                 true, "return=representation");

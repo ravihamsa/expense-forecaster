@@ -8,12 +8,16 @@ import android.content.DialogInterface;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.Window;
+import android.widget.GridLayout;
+import android.widget.TextView.OnEditorActionListener;
+import android.view.inputmethod.EditorInfo;
 import android.widget.AdapterView;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
@@ -66,6 +70,8 @@ public final class MainActivity extends Activity {
     private static final int COLOR_BG = Color.parseColor("#070F16");
     private static final int COLOR_SURFACE = Color.parseColor("#142330");
     private static final int COLOR_SURFACE_2 = Color.parseColor("#182A38");
+    private static final int COLOR_SURFACE_3 = Color.parseColor("#1D3445");
+    private static final int COLOR_BORDER = Color.parseColor("#223442");
     private static final int COLOR_TEXT = Color.parseColor("#E7F0F5");
     private static final int COLOR_MUTED = Color.parseColor("#8CA0AE");
     private static final int COLOR_TEAL = Color.parseColor("#2DD4A7");
@@ -87,7 +93,7 @@ public final class MainActivity extends Activity {
             "monthly", "one_time", "yearly", "every_n_months", "every_n_years"
     };
 
-    private enum Screen { SCAN, DASHBOARD, CASH_FLOWS, CATEGORIES, MONTH_VIEW, IGNORED }
+    private enum Screen { SCAN, DASHBOARD, CASH_FLOWS, CATEGORIES, MONTH_VIEW, IGNORED, READY }
 
     private static final class AccountOption {
         final String id;
@@ -109,6 +115,9 @@ public final class MainActivity extends Activity {
     private SupabaseApi api;
     private ExecutorService executor;
     private LinearLayout content;
+    private LinearLayout bottomNav;
+    private String selectedMonthDate = "";
+    private String ignoredQuery = "";
     private TextView statusView;
     private TextView summaryView;
     private Screen screen = Screen.SCAN;
@@ -154,15 +163,34 @@ public final class MainActivity extends Activity {
             if (!categoryOptions.contains(category)) categoryOptions.add(category);
         }
 
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(COLOR_BG);
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setBackgroundColor(COLOR_BG);
-        content.setPadding(dp(20), dp(24), dp(20), dp(32));
+        content.setPadding(dp(16), dp(18), dp(16), dp(28));
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        setContentView(scroll);
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        View navDivider = new View(this);
+        navDivider.setBackgroundColor(COLOR_BORDER);
+        root.addView(navDivider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+
+        bottomNav = new LinearLayout(this);
+        bottomNav.setOrientation(LinearLayout.HORIZONTAL);
+        bottomNav.setBackgroundColor(COLOR_SURFACE);
+        // Keep the tabs clear of the system gesture/navigation area.
+        bottomNav.setPadding(0, 0, 0, dp(28));
+        root.addView(bottomNav, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(94)));
+        setContentView(root);
 
         renderScreen();
         loadAccounts();
@@ -184,9 +212,11 @@ public final class MainActivity extends Activity {
         summaryView = null;
         content.removeAllViews();
         if (!api.isSignedIn()) {
+            bottomNav.setVisibility(View.GONE);
             renderAuthScreen();
             return;
         }
+        bottomNav.setVisibility(View.VISIBLE);
         switch (screen) {
             case DASHBOARD:
                 renderDashboardScreen();
@@ -203,10 +233,14 @@ public final class MainActivity extends Activity {
             case IGNORED:
                 renderIgnoredScreen();
                 break;
+            case READY:
+                renderReadyScreen();
+                break;
             default:
                 renderMainScreen();
                 break;
         }
+        renderBottomNav();
     }
 
     private void renderAuthScreen() {
@@ -270,36 +304,59 @@ public final class MainActivity extends Activity {
     }
 
     private void renderMainScreen() {
-        content.addView(heading("FinPlannar Companion"));
-        renderNav();
+        content.addView(heading("SMS review"));
         statusView = note(statusText());
         content.addView(statusView);
 
-        content.addView(button("Scan SMS", new View.OnClickListener() {
+        LinearLayout actions = navRow();
+        View scan = button("Scan SMS", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 onScanClicked();
             }
-        }));
-        content.addView(button("Save selected", new View.OnClickListener() {
+        });
+        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        scanParams.topMargin = dp(12);
+        scanParams.rightMargin = dp(5);
+        scan.setLayoutParams(scanParams);
+        actions.addView(scan);
+
+        View save = button("Save selected", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 onSaveSelectedClicked();
             }
+        });
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        saveParams.topMargin = dp(12);
+        saveParams.leftMargin = dp(5);
+        save.setLayoutParams(saveParams);
+        actions.addView(save);
+        content.addView(actions);
+
+        LinearLayout tools = navRow();
+        tools.addView(choiceButton("Review ready", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                goTo(Screen.READY);
+            }
         }));
-        content.addView(button("Vendor rules", new View.OnClickListener() {
+        tools.addView(choiceButton("Vendor rules", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 showVendorRules();
             }
         }));
-        content.addView(button("Export CSV", new View.OnClickListener() {
+        tools.addView(choiceButton("Export CSV", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 onExportCsvClicked();
             }
         }));
-        content.addView(button("Sign out", new View.OnClickListener() {
+        content.addView(tools);
+        content.addView(choiceButton("Sign out", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 api.signOut();
@@ -314,98 +371,92 @@ public final class MainActivity extends Activity {
         updateSummary(monthStart);
         content.addView(summaryView);
 
-        LinearLayout candidates = new LinearLayout(this);
-        candidates.setOrientation(LinearLayout.VERTICAL);
-        candidates.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         List<Candidate> pending = db.pendingCandidates(monthStart, VISIBLE_CANDIDATE_LIMIT);
         int pendingCount = db.countPending(monthStart);
+        content.addView(sectionTitle("To review (" + pendingCount + ")"));
         if (pending.isEmpty()) {
-            candidates.addView(note("No current-month messages need review. Tap Scan SMS to find more."));
+            content.addView(note("No current-month messages need review. Tap Scan SMS to find more."));
         } else {
             for (Candidate candidate : pending) {
-                addCandidateCard(candidates, candidate);
+                addCandidateCard(content, candidate);
             }
             if (pendingCount > pending.size()) {
-                candidates.addView(note("Showing " + pending.size() + " of " + pendingCount
-                        + " current-month messages awaiting review. Choose Expense, Income or Ignore "
-                        + "to move them to Save selected."));
+                content.addView(note("Showing " + pending.size() + " of " + pendingCount
+                        + " messages awaiting review."));
             }
         }
-        content.addView(candidates);
     }
 
     private void renderMonthViewScreen() {
         content.addView(heading("Month view"));
-        renderNav();
+        content.addView(note(monthViewStatus));
 
-        String label = monthViewMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()));
         LinearLayout controls = navRow();
-        controls.addView(choiceButton("Previous", new View.OnClickListener() {
+        controls.addView(choiceButton("‹ Previous", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                monthViewMonth = monthViewMonth.minusMonths(1);
-                loadMonthView();
-                renderScreen();
+                shiftMonth(-1);
             }
         }));
         controls.addView(choiceButton("This month", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 monthViewMonth = YearMonth.now();
+                selectedMonthDate = "";
                 loadMonthView();
                 renderScreen();
             }
         }));
-        controls.addView(choiceButton("Next", new View.OnClickListener() {
+        controls.addView(choiceButton("Next ›", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                monthViewMonth = monthViewMonth.plusMonths(1);
-                loadMonthView();
-                renderScreen();
+                shiftMonth(1);
             }
         }));
         content.addView(controls);
-        content.addView(note(label));
-        content.addView(note(monthViewStatus));
-        content.addView(note("Planned: +" + money(monthPlannedIncome) + " income / -"
-                + money(monthPlannedExpense) + " expenses"));
-        content.addView(note("Recorded: +" + money(monthRecordedIncome) + " income / -"
-                + money(monthRecordedExpense) + " expenses"));
 
-        if (monthEvents.isEmpty()) {
-            content.addView(note("No planned or recorded entries for this month yet."));
+        LinearLayout plannedStats = navRow();
+        plannedStats.addView(statCard("Planned income", "+" + money(monthPlannedIncome), COLOR_TEAL));
+        plannedStats.addView(statCard("Planned spend", "-" + money(monthPlannedExpense), COLOR_AMBER));
+        content.addView(plannedStats);
+        LinearLayout recordedStats = navRow();
+        recordedStats.addView(statCard("Recorded income", "+" + money(monthRecordedIncome), COLOR_TEAL));
+        recordedStats.addView(statCard("Recorded spend", "-" + money(monthRecordedExpense), COLOR_RED));
+        content.addView(recordedStats);
+
+        String label = monthViewMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()));
+        content.addView(sectionTitle(label));
+        content.addView(buildMonthGrid());
+
+        content.addView(sectionTitle(selectedMonthDate.isEmpty()
+                ? "Day details" : longDateOf(selectedMonthDate)));
+        List<MonthEvent> dayEvents = eventsOn(selectedMonthDate);
+        if (dayEvents.isEmpty()) {
+            content.addView(note(selectedMonthDate.isEmpty()
+                    ? "Tap a day in the calendar to see its planned and recorded entries."
+                    : "Nothing planned or recorded on this day."));
         } else {
-            String currentDate = "";
-            LinearLayout group = null;
-            for (MonthEvent event : monthEvents) {
-                if (!event.date.equals(currentDate)) {
-                    currentDate = event.date;
-                    group = new LinearLayout(this);
-                    group.setOrientation(LinearLayout.VERTICAL);
-                    group.setBackgroundColor(COLOR_SURFACE);
-                    group.setPadding(dp(12), dp(12), dp(12), dp(12));
-                    LinearLayout.LayoutParams groupParams = new LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                    groupParams.topMargin = dp(12);
-                    group.setLayoutParams(groupParams);
-                    TextView dateHeader = new TextView(this);
-                    dateHeader.setText(longDateOf(event.date));
-                    dateHeader.setTextColor(COLOR_TEXT);
-                    dateHeader.setTextSize(15f);
-                    dateHeader.setTypeface(Typeface.DEFAULT_BOLD);
-                    group.addView(dateHeader);
-                    content.addView(group);
-                }
-                TextView row = new TextView(this);
-                String marker = "income".equals(event.kind) ? "↑ " : "↓ ";
-                row.setText(marker + event.title + "  •  " + event.detail + "\n"
-                        + (event.kind.equals("income") ? "+" : "-") + money(event.amount));
-                row.setTextSize(14f);
-                row.setTextColor("income".equals(event.kind) ? COLOR_TEAL
+            for (final MonthEvent event : dayEvents) {
+                LinearLayout card = card();
+                TextView title = new TextView(this);
+                title.setText(("income".equals(event.kind) ? "↑ " : "↓ ")
+                        + event.title + "  •  " + money(event.amount));
+                title.setTextSize(16f);
+                title.setTypeface(Typeface.DEFAULT_BOLD);
+                title.setTextColor("income".equals(event.kind) ? COLOR_TEAL
                         : event.planned ? COLOR_AMBER : COLOR_RED);
-                row.setPadding(0, dp(7), 0, dp(7));
-                if (group != null) group.addView(row);
+                card.addView(title);
+                card.addView(note(event.detail));
+                if (!"income".equals(event.kind) && !event.refId.isEmpty()) {
+                    card.addView(button(event.planned ? "Edit planned category" : "Edit recorded category",
+                            new View.OnClickListener() {
+                                @Override
+                                public void onClick(View view) {
+                                    showMonthEventEditor(event);
+                                }
+                            }));
+                }
+                content.addView(card);
             }
         }
 
@@ -418,18 +469,237 @@ public final class MainActivity extends Activity {
         }));
     }
 
+    private void shiftMonth(int delta) {
+        monthViewMonth = monthViewMonth.plusMonths(delta);
+        selectedMonthDate = "";
+        loadMonthView();
+        renderScreen();
+    }
+
+    private List<MonthEvent> eventsOn(String date) {
+        List<MonthEvent> result = new ArrayList<>();
+        if (date == null || date.isEmpty()) return result;
+        for (MonthEvent event : monthEvents) {
+            if (date.equals(event.date)) result.add(event);
+        }
+        return result;
+    }
+
+    private GridLayout buildMonthGrid() {
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(7);
+        grid.setBackground(roundedBackground(COLOR_SURFACE, COLOR_BORDER));
+        grid.setPadding(dp(4), dp(4), dp(4), dp(4));
+
+        String[] weekdays = {"M", "T", "W", "T", "F", "S", "S"};
+        for (int column = 0; column < 7; column += 1) {
+            TextView header = new TextView(this);
+            header.setText(weekdays[column]);
+            header.setTextColor(COLOR_MUTED);
+            header.setTextSize(11f);
+            header.setTypeface(Typeface.DEFAULT_BOLD);
+            header.setGravity(android.view.Gravity.CENTER);
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams(
+                    GridLayout.spec(0), GridLayout.spec(column, 1f));
+            params.width = 0;
+            params.height = dp(26);
+            grid.addView(header, params);
+        }
+
+        int offset = (monthViewMonth.atDay(1).getDayOfWeek().getValue() + 6) % 7;
+        int total = offset + monthViewMonth.lengthOfMonth();
+        int cells = ((total + 6) / 7) * 7;
+        String today = LocalDate.now().toString();
+        for (int index = 0; index < cells; index += 1) {
+            LocalDate date = monthViewMonth.atDay(1).plusDays(index - offset);
+            String key = date.toString();
+            List<MonthEvent> dayEvents = eventsOn(key);
+            boolean inMonth = date.getMonthValue() == monthViewMonth.getMonthValue();
+            boolean selected = key.equals(selectedMonthDate);
+
+            LinearLayout cell = new LinearLayout(this);
+            cell.setOrientation(LinearLayout.VERTICAL);
+            cell.setBackground(roundedBackground(
+                    selected ? COLOR_SURFACE_3 : inMonth ? COLOR_SURFACE_2 : COLOR_BG,
+                    selected ? COLOR_TEAL : COLOR_BORDER));
+            cell.setPadding(dp(5), dp(5), dp(5), dp(5));
+            cell.setMinimumHeight(dp(74));
+
+            TextView dayNumber = new TextView(this);
+            dayNumber.setText(String.valueOf(date.getDayOfMonth()));
+            dayNumber.setTextSize(12.5f);
+            dayNumber.setTypeface(Typeface.DEFAULT_BOLD);
+            dayNumber.setTextColor(key.equals(today) ? COLOR_TEAL
+                    : inMonth ? COLOR_TEXT : COLOR_MUTED);
+            cell.addView(dayNumber);
+
+            for (int eventIndex = 0; eventIndex < Math.min(2, dayEvents.size()); eventIndex += 1) {
+                MonthEvent event = dayEvents.get(eventIndex);
+                TextView chip = new TextView(this);
+                String shortTitle = event.title.length() > 11
+                        ? event.title.substring(0, 10) + "…" : event.title;
+                chip.setText(("income".equals(event.kind) ? "↑ " : "↓ ") + shortTitle);
+                chip.setTextSize(9.5f);
+                chip.setTextColor("income".equals(event.kind) ? COLOR_TEAL
+                        : event.planned ? COLOR_AMBER : COLOR_RED);
+                cell.addView(chip);
+            }
+            if (dayEvents.size() > 2) {
+                TextView more = new TextView(this);
+                more.setText("+" + (dayEvents.size() - 2) + " more");
+                more.setTextSize(9f);
+                more.setTextColor(COLOR_MUTED);
+                cell.addView(more);
+            }
+
+            final String dateKey = key;
+            cell.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    selectedMonthDate = dateKey;
+                    renderScreen();
+                }
+            });
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams(
+                    GridLayout.spec(1 + index / 7), GridLayout.spec(index % 7, 1f));
+            params.width = 0;
+            params.height = dp(78);
+            params.setMargins(dp(2), dp(2), dp(2), dp(2));
+            grid.addView(cell, params);
+        }
+        return grid;
+    }
+
+    private void showMonthEventEditor(final MonthEvent event) {
+        final boolean planned = event.planned;
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+
+        final EditText name = textField("Name", event.title);
+        form.addView(name);
+        final EditText amount = textField("Amount (₹)", String.format(Locale.US, "%.2f", event.amount));
+        amount.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        form.addView(amount);
+
+        form.addView(note("Category"));
+        List<String> names = categoryNamesFor("expense");
+        if (!containsIgnoreCase(names, event.category)) names.add(event.category);
+        final Spinner category = stringSpinner(names.toArray(new String[0]), event.category);
+        form.addView(category);
+
+        final AlertDialog[] holder = new AlertDialog[1];
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(planned ? "Edit planned spend" : "Edit recorded spend")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", null)
+                .create();
+        holder[0] = dialog;
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                styleDialogButtons(holder[0]);
+                holder[0].getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(
+                        new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                double value = parseAmount(amount.getText().toString());
+                                if (value <= 0) {
+                                    toast("Enter a valid amount");
+                                    return;
+                                }
+                                JSONObject payload = new JSONObject();
+                                try {
+                                    payload.put("category", String.valueOf(category.getSelectedItem()));
+                                    payload.put("name", name.getText().toString().trim());
+                                    payload.put(planned ? "monthly_limit" : "amount", value);
+                                } catch (JSONException error) {
+                                    toast("Could not build the edit: " + message(error));
+                                    return;
+                                }
+                                holder[0].getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                                executor.execute(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        try {
+                                            String userId = api.getUserId();
+                                            if (planned) {
+                                                api.updateBudget(userId, event.refId, payload);
+                                            } else {
+                                                api.updateActual(userId, event.refId, payload);
+                                            }
+                                            runOnUiThread(new Runnable() {
+                                                @Override
+                                                public void run() {
+                                                    holder[0].dismiss();
+                                                    toast("Expense updated");
+                                                    loadMonthView();
+                                                    renderScreen();
+                                                }
+                                            });
+                                        } catch (final Exception error) {
+                                            runOnUiThread(new Runnable() {
+                                                @Override
+                                                public void run() {
+                                                    holder[0].getButton(AlertDialog.BUTTON_POSITIVE)
+                                                            .setEnabled(true);
+                                                    toast("Could not update expense: " + message(error));
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        });
+            }
+        });
+        dialog.show();
+    }
+
     private void renderIgnoredScreen() {
         content.addView(heading("Ignored SMS"));
-        renderNav();
-        content.addView(note("These messages were dismissed by the on-device parser. Nothing from them "
-                + "was sent to Supabase. Un-ignore returns a message to SMS review so you can "
-                + "confirm or edit it."));
+        content.addView(note("Dismissed by the on-device parser. Nothing here was sent to Supabase. "
+                + "Un-ignore brings a message back to SMS review for confirmation."));
 
-        List<Candidate> ignored = db.ignoredCandidates(100);
+        EditText search = textField("Search sender or message", ignoredQuery);
+        search.setSingleLine(true);
+        search.setOnEditorActionListener(new OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView view, int actionId, android.view.KeyEvent event) {
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
+                    ignoredQuery = view.getText().toString();
+                    renderScreen();
+                    return true;
+                }
+                return false;
+            }
+        });
+        content.addView(search);
+        if (!ignoredQuery.trim().isEmpty()) {
+            content.addView(button("Clear search", new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    ignoredQuery = "";
+                    renderScreen();
+                }
+            }));
+        }
+
+        String query = ignoredQuery.trim().toLowerCase(Locale.getDefault());
+        List<Candidate> all = db.ignoredCandidates(200);
+        List<Candidate> ignored = new ArrayList<>();
+        for (Candidate candidate : all) {
+            if (query.isEmpty() || candidate.sender.toLowerCase(Locale.getDefault()).contains(query)
+                    || candidate.body.toLowerCase(Locale.getDefault()).contains(query)) {
+                ignored.add(candidate);
+            }
+        }
+        content.addView(sectionTitle(ignored.size() + " ignored messages"));
         if (ignored.isEmpty()) {
-            content.addView(note("No ignored messages yet."));
+            content.addView(note("No messages match this search."));
             return;
         }
+
         for (final Candidate candidate : ignored) {
             LinearLayout card = card();
             TextView header = new TextView(this);
@@ -445,14 +715,13 @@ public final class MainActivity extends Activity {
             if (snippet.length() > 180) snippet = snippet.substring(0, 180) + "…";
             card.addView(note(snippet));
             card.addView(note("Amount " + (candidate.amount > 0 ? money(candidate.amount) : "not set")
-                    + "  •  " + candidate.kind + "  •  " + candidate.category
-                    + (candidate.synced ? "  •  synced as ignored" : "")));
+                    + "  •  " + candidate.kind + "  •  " + candidate.category));
+            if (candidate.synced) card.addView(badge("synced as ignored", COLOR_MUTED));
             card.addView(button("Un-ignore", new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
                     db.unignoreCandidate(candidate.fingerprint);
                     toast("Message returned to SMS review");
-                    updateSummary(startOfCurrentMonthMillis());
                     renderScreen();
                 }
             }));
@@ -460,68 +729,111 @@ public final class MainActivity extends Activity {
         }
     }
 
-    // ------------------------------------------------------------ nav + dashboard
+    private void renderReadyScreen() {
+        content.addView(heading("Ready to save"));
+        content.addView(note("These messages are confirmed but nothing has been sent to Supabase yet. "
+                + "Edit them, send one back to SMS review, or ignore it before tapping Save selected."));
 
-    private void renderNav() {
-        LinearLayout first = navRow();
-        first.addView(choiceButton("Dashboard", new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                screen = Screen.DASHBOARD;
-                dashboardStatus = "Loading dashboard…";
-                loadDashboard();
-                renderScreen();
+        List<Candidate> ready = db.readyCandidates(startOfCurrentMonthMillis());
+        if (ready.isEmpty()) {
+            content.addView(note("Nothing is queued for Save selected yet."));
+        } else {
+            content.addView(note(ready.size() + " queued for this month."));
+            for (Candidate candidate : ready) {
+                addReadyCandidateCard(content, candidate);
             }
-        }));
-        first.addView(choiceButton("Cash flows", new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                screen = Screen.CASH_FLOWS;
-                renderScreen();
-                loadCashFlows();
-            }
-        }));
-        content.addView(first);
+        }
 
-        LinearLayout second = navRow();
-        second.addView(choiceButton("Categories", new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                screen = Screen.CATEGORIES;
-                renderScreen();
-            }
-        }));
-        second.addView(choiceButton("SMS review", new View.OnClickListener() {
+        content.addView(button("Back to SMS review", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 screen = Screen.SCAN;
                 renderScreen();
             }
         }));
-        content.addView(second);
+    }
 
-        LinearLayout third = navRow();
-        third.addView(choiceButton("Month view", new View.OnClickListener() {
+    // ------------------------------------------------------------ nav + dashboard
+
+    private void renderBottomNav() {
+        bottomNav.removeAllViews();
+        addTab("⌂", "Plan", Screen.DASHBOARD);
+        addTab("✉", "SMS", Screen.SCAN);
+        addTab("✓", "Ready", Screen.READY);
+        addTab("▦", "Month", Screen.MONTH_VIEW);
+        addTab("⊘", "Ignored", Screen.IGNORED);
+    }
+
+    private void addTab(String icon, String label, final Screen target) {
+        boolean active = screen == target
+                || (target == Screen.DASHBOARD && (screen == Screen.CASH_FLOWS || screen == Screen.CATEGORIES));
+        LinearLayout tab = new LinearLayout(this);
+        tab.setOrientation(LinearLayout.VERTICAL);
+        tab.setGravity(android.view.Gravity.CENTER);
+        tab.setBackgroundColor(active ? COLOR_SURFACE_3 : COLOR_SURFACE);
+        tab.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        TextView iconView = new TextView(this);
+        iconView.setText(icon);
+        iconView.setTextSize(19f);
+        iconView.setTextColor(active ? COLOR_TEAL : COLOR_MUTED);
+        tab.addView(iconView);
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextSize(11f);
+        labelView.setTextColor(active ? COLOR_TEXT : COLOR_MUTED);
+        tab.addView(labelView);
+
+        tab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                screen = Screen.MONTH_VIEW;
-                loadMonthView();
-                renderScreen();
+                goTo(target);
             }
-        }));
-        third.addView(choiceButton("Ignored SMS", new View.OnClickListener() {
+        });
+        bottomNav.addView(tab);
+    }
+
+    private void goTo(Screen target) {
+        if (target == Screen.MONTH_VIEW && screen != Screen.MONTH_VIEW) {
+            selectedMonthDate = "";
+            loadMonthView();
+        }
+        if (target == Screen.DASHBOARD) {
+            dashboardStatus = "Loading dashboard…";
+            loadDashboard();
+        }
+        screen = target;
+        renderScreen();
+    }
+
+    private void addPlanSubNav() {
+        LinearLayout row = navRow();
+        row.addView(choiceButton("Dashboard", new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                screen = Screen.IGNORED;
-                renderScreen();
+                goTo(Screen.DASHBOARD);
             }
         }));
-        content.addView(third);
+        row.addView(choiceButton("Cash flows", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                goTo(Screen.CASH_FLOWS);
+            }
+        }));
+        row.addView(choiceButton("Categories", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                goTo(Screen.CATEGORIES);
+            }
+        }));
+        content.addView(row);
     }
 
     private void renderDashboardScreen() {
         content.addView(heading("Dashboard"));
-        renderNav();
+        addPlanSubNav();
         content.addView(note(dashboardStatus));
 
         double plannedNet = dashboardPlannedIncome - dashboardPlannedExpense;
@@ -710,8 +1022,12 @@ public final class MainActivity extends Activity {
                                     + (target == null ? "" : " · moved from " + longDateOf(occurrence));
                             String key = "budget-" + id + "-" + occurrence;
                             if (!events.containsKey(key)) {
-                                events.put(key, new MonthEvent(effective, title, detail,
-                                        "expense", true, amount));
+                                MonthEvent event = new MonthEvent(effective, title, detail,
+                                        "expense", true, amount);
+                                event.refId = id;
+                                event.category = category;
+                                event.source = "budget";
+                                events.put(key, event);
                             }
                         }
                     }
@@ -745,10 +1061,15 @@ public final class MainActivity extends Activity {
                         double amount = Math.abs(row.optDouble("amount", 0));
                         String title = valueOr(row.optString("name", ""),
                                 valueOr(row.optString("category", ""), "Recorded"));
-                        String detail = valueOr(row.optString("category", ""), "Other") + " · Recorded"
-                                + ("sms".equals(row.optString("source", "")) ? " · SMS" : "");
-                        events.put("actual-" + row.optString("event_key", String.valueOf(index)),
-                                new MonthEvent(date, title, detail, kind, false, amount));
+                        String actualCategory = valueOr(row.optString("category", ""), "Other");
+                        String source = valueOr(row.optString("source", ""), "manual");
+                        String detail = actualCategory + " · Recorded"
+                                + ("sms".equals(source) ? " · SMS" : "");
+                        MonthEvent event = new MonthEvent(date, title, detail, kind, false, amount);
+                        event.refId = row.optString("event_key", "");
+                        event.category = actualCategory;
+                        event.source = source;
+                        events.put("actual-" + row.optString("event_key", String.valueOf(index)), event);
                     }
 
                     List<MonthEvent> sorted = new ArrayList<>(events.values());
@@ -855,7 +1176,7 @@ public final class MainActivity extends Activity {
 
     private void renderCashFlowsScreen() {
         content.addView(heading("Cash flows"));
-        renderNav();
+        addPlanSubNav();
         content.addView(note("Edit planned entries here. SMS imports keep their source tag."));
         content.addView(button("Add cash flow", new View.OnClickListener() {
             @Override
@@ -1131,7 +1452,7 @@ public final class MainActivity extends Activity {
 
     private void renderCategoriesScreen() {
         content.addView(heading("Categories"));
-        renderNav();
+        addPlanSubNav();
         content.addView(note("Names added here are available in cash flows and SMS review."));
         content.addView(button("Add category", new View.OnClickListener() {
             @Override
@@ -1302,6 +1623,76 @@ public final class MainActivity extends Activity {
         }));
         card.addView(choices);
 
+        parent.addView(card);
+    }
+
+    /** A confirmed row can still be edited or returned to review before Save selected. */
+    private void addReadyCandidateCard(LinearLayout parent, final Candidate candidate) {
+        LinearLayout card = card();
+
+        String date = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                .format(new Date(candidate.smsDate));
+        TextView header = new TextView(this);
+        header.setText(candidate.sender + "  •  " + date);
+        header.setTextColor(COLOR_TEXT);
+        header.setTextSize(15f);
+        header.setTypeface(Typeface.DEFAULT_BOLD);
+        card.addView(header);
+
+        String snippet = candidate.body.replaceAll("\\s+", " ").trim();
+        if (snippet.length() > 160) snippet = snippet.substring(0, 160) + "…";
+        card.addView(note(snippet));
+
+        final EditText amount = textField("Amount (₹)", String.format(Locale.US,
+                "%.2f", candidate.amount));
+        amount.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        card.addView(amount);
+        final EditText name = textField("Name", candidate.name);
+        card.addView(name);
+
+        card.addView(note("Kind"));
+        final Spinner kind = stringSpinner(new String[]{"expense", "income"}, candidate.kind);
+        card.addView(kind);
+        card.addView(note("Category"));
+        final Spinner category = categorySpinner(candidate.category);
+        card.addView(category);
+        card.addView(note("Account"));
+        final Spinner account = accountSpinner(candidate.account);
+        card.addView(account);
+
+        LinearLayout actions = navRow();
+        actions.addView(choiceButton("Save changes", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                double value = parseAmount(amount.getText().toString());
+                if (value <= 0) {
+                    toast("Enter a valid amount");
+                    return;
+                }
+                db.updateCandidateChoice(candidate.fingerprint, value,
+                        name.getText().toString(), String.valueOf(category.getSelectedItem()),
+                        String.valueOf(account.getSelectedItem()), String.valueOf(kind.getSelectedItem()));
+                toast("Updated locally. Tap Save selected on SMS review to sync.");
+                renderScreen();
+            }
+        }));
+        actions.addView(choiceButton("Back to review", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                db.returnToReview(candidate.fingerprint);
+                toast("Returned to SMS review");
+                renderScreen();
+            }
+        }));
+        actions.addView(choiceButton("Ignore", new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                db.markIgnored(candidate.fingerprint);
+                toast("Moved to Ignored SMS");
+                renderScreen();
+            }
+        }));
+        card.addView(actions);
         parent.addView(card);
     }
 
@@ -1681,17 +2072,63 @@ public final class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(text);
         view.setTextColor(COLOR_TEXT);
-        view.setTextSize(22f);
+        view.setTextSize(24f);
         view.setTypeface(Typeface.DEFAULT_BOLD);
-        return withTopMargin(view, dp(4));
+        return withTopMargin(view, dp(2));
+    }
+
+    private TextView sectionTitle(String text) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextColor(COLOR_TEXT);
+        view.setTextSize(17f);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
+        return withTopMargin(view, dp(18));
     }
 
     private TextView note(String text) {
         TextView view = new TextView(this);
         view.setText(text);
         view.setTextColor(COLOR_MUTED);
-        view.setTextSize(14f);
+        view.setTextSize(14.5f);
+        view.setLineSpacing(0f, 1.15f);
         return withTopMargin(view, dp(8));
+    }
+
+    private TextView badge(String text, int color) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextColor(COLOR_DARK_TEXT);
+        view.setTextSize(12f);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setBackground(roundedBackground(color, color));
+        view.setPadding(dp(9), dp(4), dp(9), dp(4));
+        return withTopMargin(view, dp(6));
+    }
+
+    private LinearLayout statCard(String label, String value, int color) {
+        LinearLayout view = new LinearLayout(this);
+        view.setOrientation(LinearLayout.VERTICAL);
+        view.setBackground(roundedBackground(COLOR_SURFACE, COLOR_BORDER));
+        view.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        params.topMargin = dp(10);
+        params.leftMargin = dp(5);
+        view.setLayoutParams(params);
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextColor(COLOR_MUTED);
+        labelView.setTextSize(11.5f);
+        view.addView(labelView);
+        TextView valueView = new TextView(this);
+        valueView.setText(value);
+        valueView.setTextColor(color);
+        valueView.setTextSize(17f);
+        valueView.setTypeface(Typeface.DEFAULT_BOLD);
+        view.addView(valueView);
+        return view;
     }
 
     private EditText textField(String hint, String value) {
@@ -1701,8 +2138,9 @@ public final class MainActivity extends Activity {
         view.setText(value == null ? "" : value);
         view.setTextColor(COLOR_TEXT);
         view.setTextSize(16f);
-        view.setBackgroundColor(COLOR_SURFACE_2);
-        view.setPadding(dp(12), dp(10), dp(12), dp(10));
+        view.setBackground(roundedBackground(COLOR_SURFACE_2, COLOR_BORDER));
+        view.setPadding(dp(14), dp(12), dp(14), dp(12));
+        view.setMinHeight(dp(48));
         return withTopMargin(view, dp(8));
     }
 
@@ -1710,8 +2148,12 @@ public final class MainActivity extends Activity {
         Button view = new Button(this);
         view.setText(label);
         view.setTextColor(COLOR_DARK_TEXT);
-        view.setBackgroundColor(COLOR_TEAL);
+        view.setTextSize(15f);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
         view.setAllCaps(false);
+        view.setBackground(roundedBackground(COLOR_TEAL, COLOR_TEAL));
+        view.setPadding(dp(16), dp(12), dp(16), dp(12));
+        view.setMinHeight(dp(48));
         view.setOnClickListener(listener);
         return withTopMargin(view, dp(12));
     }
@@ -1720,18 +2162,27 @@ public final class MainActivity extends Activity {
         Button view = new Button(this);
         view.setText(label);
         view.setTextColor(COLOR_TEXT);
-        view.setBackgroundColor(COLOR_SURFACE_2);
+        view.setTextSize(13.5f);
         view.setAllCaps(false);
-        view.setTextSize(13f);
+        view.setBackground(roundedBackground(COLOR_SURFACE_3, COLOR_BORDER));
+        view.setPadding(dp(10), dp(10), dp(10), dp(10));
+        view.setMinHeight(dp(46));
         view.setOnClickListener(listener);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        params.topMargin = dp(10);
-        if (!"Expense".equals(label)) {
-            params.leftMargin = dp(6);
-        }
+        params.topMargin = dp(8);
+        params.leftMargin = dp(5);
         view.setLayoutParams(params);
         return view;
+    }
+
+    private GradientDrawable roundedBackground(int fill, int stroke) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.RECTANGLE);
+        drawable.setCornerRadius(dp(12));
+        drawable.setColor(fill);
+        drawable.setStroke(dp(1), stroke);
+        return drawable;
     }
 
     private void styleDialogButtons(AlertDialog dialog) {
@@ -1740,10 +2191,11 @@ public final class MainActivity extends Activity {
         styleDialogButton(dialog.getButton(AlertDialog.BUTTON_NEUTRAL), false);
     }
 
-    private static void styleDialogButton(Button button, boolean primary) {
+    private void styleDialogButton(Button button, boolean primary) {
         if (button == null) return;
-        button.setTextColor(primary ? COLOR_DARK_TEXT : COLOR_MUTED);
-        button.setBackgroundColor(primary ? COLOR_TEAL : COLOR_SURFACE_2);
+        button.setTextColor(primary ? COLOR_DARK_TEXT : COLOR_TEXT);
+        button.setBackground(roundedBackground(primary ? COLOR_TEAL : COLOR_SURFACE_3,
+                primary ? COLOR_TEAL : COLOR_BORDER));
         button.setAllCaps(false);
     }
 
@@ -1891,9 +2343,9 @@ public final class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(text);
         view.setTextColor(COLOR_TEXT);
-        view.setTextSize(16f);
-        view.setBackgroundColor(COLOR_SURFACE_2);
-        view.setPadding(dp(10), dp(8), dp(10), dp(8));
+        view.setTextSize(15f);
+        view.setBackground(roundedBackground(COLOR_SURFACE_2, COLOR_BORDER));
+        view.setPadding(dp(12), dp(11), dp(12), dp(11));
         return view;
     }
 
@@ -1908,8 +2360,8 @@ public final class MainActivity extends Activity {
     private LinearLayout card() {
         LinearLayout view = new LinearLayout(this);
         view.setOrientation(LinearLayout.VERTICAL);
-        view.setBackgroundColor(COLOR_SURFACE);
-        view.setPadding(dp(12), dp(12), dp(12), dp(12));
+        view.setBackground(roundedBackground(COLOR_SURFACE, COLOR_BORDER));
+        view.setPadding(dp(16), dp(14), dp(16), dp(14));
         return withTopMargin(view, dp(12));
     }
 
@@ -1945,8 +2397,8 @@ public final class MainActivity extends Activity {
         view.setText(value == null ? "" : value);
         view.setTextColor(COLOR_TEXT);
         view.setTextSize(15f);
-        view.setBackgroundColor(COLOR_SURFACE_2);
-        view.setPadding(dp(12), dp(10), dp(12), dp(10));
+        view.setBackground(roundedBackground(COLOR_SURFACE_2, COLOR_BORDER));
+        view.setPadding(dp(12), dp(11), dp(12), dp(11));
         return view;
     }
 
