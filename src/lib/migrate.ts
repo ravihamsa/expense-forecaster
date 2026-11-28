@@ -105,6 +105,10 @@ export function planBudgetOnlyMigration(data: AppData): BudgetOnlyMigration {
   const updatedActuals = new Map<string, Actual>()
   const clearedBudgetLinks = new Set<string>()
   const deletedCashFlowIds = new Set<string>()
+  // A budget occurrence can hold only one actual. Keep every original key
+  // reserved so a remap never collides with another row during the sequential
+  // Supabase updates in applyMigration().
+  const usedEventKeys = new Set((data.actuals ?? []).map((actual) => actual.event_key))
 
   for (const flow of data.cashFlows ?? []) {
     if (flow.kind !== 'expense') continue
@@ -144,9 +148,20 @@ export function planBudgetOnlyMigration(data: AppData): BudgetOnlyMigration {
       const matchedBudget = budget ?? (isSms
         ? matchBudgetForActual({ ...actual, category: actual.category || flow.category }, budgets)
         : null)
+      let eventKey = remapEventKey(matchedBudget, actual)
+      if (eventKey !== actual.event_key && usedEventKeys.has(eventKey)) {
+        let suffix = 2
+        let standaloneKey = standaloneActualEventId(actual.id)
+        while (usedEventKeys.has(standaloneKey)) {
+          standaloneKey = `${standaloneActualEventId(actual.id)}-${suffix}`
+          suffix += 1
+        }
+        eventKey = standaloneKey
+      }
+      usedEventKeys.add(eventKey)
       const next = {
         ...actual,
-        event_key: remapEventKey(matchedBudget, actual),
+        event_key: eventKey,
         cash_flow_id: null,
       }
       updatedActuals.set(actual.id, next)
