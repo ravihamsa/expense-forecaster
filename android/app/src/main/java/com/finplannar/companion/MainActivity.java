@@ -137,17 +137,25 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private static final class OverspentCategory {
+    private static final class CategoryBudgetStatus {
         final String category;
         final double budget;
         final double recorded;
-        final double over;
+        final double variance;
 
-        OverspentCategory(String category, double budget, double recorded) {
+        CategoryBudgetStatus(String category, double budget, double recorded) {
             this.category = category;
             this.budget = budget;
             this.recorded = recorded;
-            this.over = Math.max(0, recorded - budget);
+            this.variance = recorded - budget;
+        }
+
+        boolean isOver() {
+            return variance > 0.005;
+        }
+
+        boolean isUnder() {
+            return variance < -0.005;
         }
     }
 
@@ -166,7 +174,7 @@ public final class MainActivity extends Activity {
     private String monthFilter = "all";
     private final Map<String, Double> cashFlowOverrides = new HashMap<>();
     private final List<RecentPlanEntry> recentPlanEntries = new ArrayList<>();
-    private final List<OverspentCategory> overspentCategories = new ArrayList<>();
+    private final List<CategoryBudgetStatus> categoryBudgets = new ArrayList<>();
     private long lastBackPress;
     private TextView statusView;
     private TextView summaryView;
@@ -1205,16 +1213,32 @@ public final class MainActivity extends Activity {
         content.addView(note("Planned net " + signedMoney(plannedNet)
                 + "  •  Recorded net " + signedMoney(actualNet)));
 
-        content.addView(sectionTitle("Over budget categories"));
-        if (overspentCategories.isEmpty()) {
-            content.addView(note("No recorded category is over its budget this month."));
+        content.addView(sectionTitle("Category spend vs budget"));
+        if (categoryBudgets.isEmpty()) {
+            content.addView(note("No budgets or recorded categories yet this month."));
         } else {
-            content.addView(note(overspentCategories.size()
-                    + (overspentCategories.size() == 1 ? " category is" : " categories are")
-                    + " over budget · " + dashboardCurrency + " "
-                    + money(sumOverspent())));
-            for (OverspentCategory item : overspentCategories) {
-                content.addView(overspentCard(item));
+            int overCount = 0;
+            int underCount = 0;
+            int onCount = 0;
+            double overTotal = 0;
+            for (CategoryBudgetStatus item : categoryBudgets) {
+                if (item.isOver()) {
+                    overCount += 1;
+                    overTotal += item.variance;
+                } else if (item.isUnder()) {
+                    underCount += 1;
+                } else {
+                    onCount += 1;
+                }
+            }
+            String summary = overCount + " over · " + underCount + " under · "
+                    + onCount + " on budget";
+            if (overTotal > 0.005) {
+                summary += " · " + dashboardCurrency + " " + money(overTotal) + " over in total";
+            }
+            content.addView(note(summary));
+            for (CategoryBudgetStatus item : categoryBudgets) {
+                content.addView(categoryBudgetCard(item));
             }
         }
 
@@ -1384,24 +1408,26 @@ public final class MainActivity extends Activity {
                                 amount, row.optString("date", ""), "Recorded", detail));
                     }
 
-                    List<OverspentCategory> overspent = new ArrayList<OverspentCategory>();
-                    for (Map.Entry<String, Double> entry : actualByCategory.entrySet()) {
-                        Double planned = budgetByCategory.get(entry.getKey());
-                        double budget = planned == null ? 0 : planned;
-                        if (entry.getValue() - budget > 0.005) {
-                            overspent.add(new OverspentCategory(
-                                    entry.getKey(), budget, entry.getValue()));
-                        }
+                    HashSet<String> budgetCategories = new HashSet<String>();
+                    budgetCategories.addAll(budgetByCategory.keySet());
+                    budgetCategories.addAll(actualByCategory.keySet());
+                    List<CategoryBudgetStatus> statuses = new ArrayList<CategoryBudgetStatus>();
+                    for (String category : budgetCategories) {
+                        Double planned = budgetByCategory.get(category);
+                        Double recorded = actualByCategory.get(category);
+                        statuses.add(new CategoryBudgetStatus(category,
+                                planned == null ? 0 : planned,
+                                recorded == null ? 0 : recorded));
                     }
-                    Collections.sort(overspent, new Comparator<OverspentCategory>() {
+                    Collections.sort(statuses, new Comparator<CategoryBudgetStatus>() {
                         @Override
-                        public int compare(OverspentCategory left, OverspentCategory right) {
-                            int byOver = Double.compare(right.over, left.over);
-                            if (byOver != 0) return byOver;
+                        public int compare(CategoryBudgetStatus left, CategoryBudgetStatus right) {
+                            int byVariance = Double.compare(right.variance, left.variance);
+                            if (byVariance != 0) return byVariance;
                             return left.category.compareTo(right.category);
                         }
                     });
-                    final List<OverspentCategory> finalOverspent = overspent;
+                    final List<CategoryBudgetStatus> finalCategoryBudgets = statuses;
 
                     Collections.sort(recent, new Comparator<RecentPlanEntry>() {
                         @Override
@@ -1430,8 +1456,8 @@ public final class MainActivity extends Activity {
                             cashFlowOverrides.putAll(loadedOverrides);
                             recentPlanEntries.clear();
                             recentPlanEntries.addAll(finalRecent);
-                            overspentCategories.clear();
-                            overspentCategories.addAll(finalOverspent);
+                            categoryBudgets.clear();
+                            categoryBudgets.addAll(finalCategoryBudgets);
                             dashboardCurrency = currency;
                             dashboardOpeningTotal = openingTotal[0];
                             dashboardPlannedIncome = plannedIncome[0];
@@ -2681,25 +2707,23 @@ public final class MainActivity extends Activity {
         return (amount >= 0 ? "+" : "-") + money(Math.abs(amount));
     }
 
-    private double sumOverspent() {
-        double total = 0;
-        for (OverspentCategory item : overspentCategories) total += item.over;
-        return total;
-    }
+    private LinearLayout categoryBudgetCard(CategoryBudgetStatus item) {
+        boolean over = item.isOver();
+        boolean under = item.isUnder();
+        int accent = over ? COLOR_RED : under ? COLOR_TEAL : COLOR_AMBER;
 
-    private LinearLayout overspentCard(OverspentCategory item) {
         LinearLayout row = card();
-        row.setBackground(roundedBackground(COLOR_SURFACE, COLOR_RED));
+        row.setBackground(roundedBackground(COLOR_SURFACE, accent));
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
         TextView mark = new TextView(this);
-        mark.setText("!");
-        mark.setTextColor(COLOR_RED);
+        mark.setText(over ? "↑" : under ? "↓" : "=");
+        mark.setTextColor(accent);
         mark.setTextSize(15f);
         mark.setTypeface(Typeface.DEFAULT_BOLD);
         mark.setGravity(android.view.Gravity.CENTER);
-        mark.setBackground(roundedBackground(COLOR_SURFACE_3, COLOR_RED));
+        mark.setBackground(roundedBackground(COLOR_SURFACE_3, accent));
         LinearLayout.LayoutParams markParams = new LinearLayout.LayoutParams(dp(30), dp(30));
         markParams.rightMargin = dp(10);
         mark.setLayoutParams(markParams);
@@ -2727,13 +2751,13 @@ public final class MainActivity extends Activity {
         LinearLayout amounts = new LinearLayout(this);
         amounts.setOrientation(LinearLayout.VERTICAL);
         TextView amount = new TextView(this);
-        amount.setText(dashboardCurrency + " " + money(item.over));
-        amount.setTextColor(COLOR_RED);
+        amount.setText(dashboardCurrency + " " + money(Math.abs(item.variance)));
+        amount.setTextColor(accent);
         amount.setTextSize(15f);
         amount.setTypeface(Typeface.DEFAULT_BOLD);
         amount.setGravity(android.view.Gravity.END);
         amounts.addView(amount);
-        TextView caption = note("over budget");
+        TextView caption = note(over ? "over budget" : under ? "under budget" : "on budget");
         caption.setTextSize(11f);
         caption.setGravity(android.view.Gravity.END);
         amounts.addView(caption);
