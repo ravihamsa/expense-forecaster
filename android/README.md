@@ -41,8 +41,9 @@ transactions into the same Supabase account.
   second full amount. Account names and the currency label come from Supabase.
 - **Cash-flow CRUD.** The **Cash flows** tab lists planned entries from `cash_flows` and
   lets you add, edit or delete them. Name, amount, kind, category, account, schedule, start
-  date and repeat interval are editable. SMS-imported rows keep `source = 'sms'` when
-  edited. Deleting a plan does not delete recorded actuals.
+  date and repeat interval are editable. Calendar splits appear as split-adjusted amounts
+  with the original schedule noted; SMS-imported rows keep `source = 'sms'` when edited.
+  Deleting a plan does not delete recorded actuals.
 - **Month view with editable expenses.** The **Month** tab shows a seven-column calendar
   with planned and recorded entries and **All / Planned / Recorded** filters. Tap a day to
   inspect its entries; expense cards offer **Edit planned category** (updates

@@ -432,10 +432,15 @@ public final class MainActivity extends Activity {
 
         EditText search = textField("Search sender or message", smsQuery);
         search.setSingleLine(true);
+        search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         search.setOnEditorActionListener(new OnEditorActionListener() {
             @Override
             public boolean onEditorAction(TextView view, int actionId, android.view.KeyEvent event) {
-                if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
+                boolean enterPressed = event != null
+                        && event.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER;
+                if (actionId == EditorInfo.IME_ACTION_SEARCH
+                        || actionId == EditorInfo.IME_ACTION_DONE
+                        || (actionId == EditorInfo.IME_ACTION_UNSPECIFIED && enterPressed)) {
                     smsQuery = view.getText().toString();
                     smsVisibleLimit = VISIBLE_CANDIDATE_LIMIT;
                     scrollView.scrollTo(0, 0);
@@ -1492,8 +1497,13 @@ public final class MainActivity extends Activity {
             title.setTextSize(16f);
             title.setTypeface(Typeface.DEFAULT_BOLD);
             card.addView(title);
-            card.addView(note(flow.kind + " • " + money(flow.amount) + " • "
-                    + flow.category + " • " + accountLabel(flow.account)));
+            String flowMonth = flow.startDate != null && flow.startDate.length() >= 7
+                    ? flow.startDate.substring(0, 7) : "";
+            double shownAmount = cashFlowAmountFor(flow, flowMonth, cashFlowOverrides);
+            boolean adjusted = cashFlowOverrides.containsKey(cashFlowOverrideKey(flow.id, flowMonth));
+            card.addView(note(flow.kind + " • " + money(shownAmount) + " • "
+                    + flow.category + " • " + accountLabel(flow.account)
+                    + (adjusted ? " • split-adjusted" : "")));
             card.addView(note("Schedule: " + flow.recurrence + " • from " + flow.startDate
                     + ("sms".equals(flow.source) ? " • SMS import" : "")));
             List<String> fixedMonths = new ArrayList<String>();
@@ -1505,7 +1515,8 @@ public final class MainActivity extends Activity {
             }
             if (!fixedMonths.isEmpty()) {
                 Collections.sort(fixedMonths);
-                card.addView(note("Split-adjusted months: "
+                card.addView(note("Original schedule " + money(flow.amount)
+                        + "; split-adjusted months: "
                         + android.text.TextUtils.join(", ", fixedMonths)));
             }
             LinearLayout actions = navRow();
