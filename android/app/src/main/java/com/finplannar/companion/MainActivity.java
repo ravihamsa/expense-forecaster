@@ -1114,7 +1114,7 @@ public final class MainActivity extends Activity {
 
     private void goTo(Screen target) {
         if (target == Screen.MONTH_VIEW && screen != Screen.MONTH_VIEW) {
-            selectedMonthDate = "";
+            selectedMonthDate = defaultSelectedDate();
             loadMonthView();
         }
         if (target == Screen.DASHBOARD) {
